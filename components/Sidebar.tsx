@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil } from 'lucide-react';
 import { Project, Note, NoteType, SearchOptions } from '../types';
@@ -272,7 +273,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
 
               <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 select-none">
-                <button onClick={() => onSelectProject('project', 'quick_notes')} className={`w-full text-left px-4 py-2 flex items-center gap-3 text-sm transition-all mb-1 ${activeProjectId === 'quick_notes' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-r-2 border-blue-500' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'} ${isCollapsed ? 'justify-center px-2' : ''}`}>
+                <button onClick={() => onSelectProject('project', 'quick_notes')} className={`w-full text-left py-2 flex items-center gap-3 text-sm transition-all mb-1 ${activeProjectId === 'quick_notes' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-r-2 border-blue-500' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'} ${isCollapsed ? 'justify-center px-2' : 'px-4'}`}>
                   <Zap size={18} className={activeProjectId === 'quick_notes' ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500'} />
                   {!isCollapsed && <span className="font-medium truncate">Quick Notes</span>}
                 </button>
@@ -293,7 +294,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 </button>
                                 
-                                <div className={`flex-1 flex items-center gap-2 py-1.5 pr-2 overflow-hidden cursor-pointer ${isCollapsed ? 'justify-center pl-0' : ''} ${isProjectActive ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'}`}>
+                                <div className={`flex-1 flex items-center gap-2 py-1.5 overflow-hidden cursor-pointer ${isCollapsed ? 'justify-center px-2' : 'pr-2'} ${isProjectActive ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'}`}>
                                     {isExpanded ? <FolderOpen size={18} className="flex-shrink-0 text-blue-500" /> : <Folder size={18} className="flex-shrink-0 text-blue-500" />}
                                     
                                     {!isCollapsed && (
@@ -417,15 +418,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         {searchResults.notes.length > 0 && (
                             <div className="py-2">
                                 <div className="px-3 pb-1 text-[10px] font-bold text-gray-400 uppercase">Content</div>
-                                {searchResults.notes.map(n => (
-                                    <button key={n.id} onClick={() => { onNavigate('note', n.id, searchQuery); }} className="w-full text-left px-3 py-3 hover:bg-gray-100 dark:hover:bg-slate-800 border-b border-gray-100 dark:border-slate-800/50 group flex flex-col items-start gap-1">
-                                        <div className="flex items-center gap-2 w-full">
-                                            {n.type === NoteType.TEXT ? <FileText size={14} className="text-gray-400" /> : <File size={14} className="text-orange-400" />}
-                                            <span className="text-sm font-semibold text-gray-800 dark:text-slate-200 truncate flex-1"><HighlightedText text={n.title || 'Untitled'} /></span>
-                                        </div>
-                                        {n.snippet && <div className="pl-6 text-xs text-gray-500 dark:text-slate-400 line-clamp-2 leading-relaxed font-mono opacity-90"><HighlightedText text={n.snippet} /></div>}
-                                    </button>
-                                ))}
+                                {searchResults.notes.map(n => {
+                                    // Calculate display title based on content if title is generic
+                                    const displayTitle = (n.title && n.title !== 'Untitled') 
+                                        ? n.title 
+                                        : (n.content 
+                                            ? n.content.replace(/[\n\r]+/g, ' ').substring(0, 40) + (n.content.length > 40 ? '...' : '') 
+                                            : 'Untitled Note');
+
+                                    return (
+                                        <button key={n.id} onClick={() => { onNavigate('note', n.id, searchQuery); }} className="w-full text-left px-3 py-3 hover:bg-gray-100 dark:hover:bg-slate-800 border-b border-gray-100 dark:border-slate-800/50 group flex flex-col items-start gap-1">
+                                            <div className="flex items-center gap-2 w-full">
+                                                {n.type === NoteType.TEXT ? <FileText size={14} className="text-gray-400" /> : <File size={14} className="text-orange-400" />}
+                                                <span className="text-sm font-semibold text-gray-800 dark:text-slate-200 truncate flex-1"><HighlightedText text={displayTitle} /></span>
+                                            </div>
+                                            {n.snippet && <div className="pl-6 text-xs text-gray-500 dark:text-slate-400 line-clamp-2 leading-relaxed font-mono opacity-90"><HighlightedText text={n.snippet} /></div>}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

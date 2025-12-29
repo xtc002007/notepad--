@@ -1,35 +1,29 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Workspace } from './components/Workspace';
 import { QuickNotesView } from './components/QuickNotesView';
 import { SettingsModal } from './components/SettingsModal';
 import { Project, Note, NoteType, Theme } from './types';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, Loader2 } from 'lucide-react';
+import { storage } from './storage';
 
 // Utility for ID generation since we don't have external libs
 const generateId = () => Math.random().toString(36).substring(2, 9);
-
-const INITIAL_PROJECTS: Project[] = [];
-const INITIAL_NOTES: Note[] = [];
 
 // Special ID for Quick Notes View
 const QUICK_NOTES_VIEW_ID = 'quick_notes';
 
 const App: React.FC = () => {
-  // State
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const saved = localStorage.getItem('zen_projects');
-    return saved ? JSON.parse(saved) : INITIAL_PROJECTS;
-  });
+  // Loading State
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
-  const [notes, setNotes] = useState<Note[]>(() => {
-    const saved = localStorage.getItem('zen_notes');
-    return saved ? JSON.parse(saved) : INITIAL_NOTES;
-  });
+  // Data State
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
 
-  const [theme, setTheme] = useState<Theme>(() => {
-    return (localStorage.getItem('zen_theme') as Theme) || 'system';
-  });
+  // Theme State (Sync initialization for UI stability)
+  const [theme, setTheme] = useState<Theme>(() => storage.getTheme());
 
   const [activeProjectId, setActiveProjectId] = useState<string | null>(QUICK_NOTES_VIEW_ID); 
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null); 
@@ -37,17 +31,42 @@ const App: React.FC = () => {
   const [navigatedSearchQuery, setNavigatedSearchQuery] = useState<string>(''); // For passing search context
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Persistence
+  // --- Data Loading ---
   useEffect(() => {
-    localStorage.setItem('zen_projects', JSON.stringify(projects));
-  }, [projects]);
+    const loadData = async () => {
+      try {
+        const [loadedProjects, loadedNotes] = await Promise.all([
+          storage.getProjects(),
+          storage.getNotes()
+        ]);
+        setProjects(loadedProjects);
+        setNotes(loadedNotes);
+      } catch (error) {
+        console.error("Failed to load initial data", error);
+      } finally {
+        setIsDataLoaded(true);
+      }
+    };
+    loadData();
+  }, []);
+
+  // --- Persistence (Auto-save) ---
+  // Only save if data has finished loading to prevent overwriting with empty arrays
+  useEffect(() => {
+    if (isDataLoaded) {
+      storage.saveProjects(projects);
+    }
+  }, [projects, isDataLoaded]);
 
   useEffect(() => {
-    localStorage.setItem('zen_notes', JSON.stringify(notes));
-  }, [notes]);
+    if (isDataLoaded) {
+      storage.saveNotes(notes);
+    }
+  }, [notes, isDataLoaded]);
 
+  // --- Theme Handling ---
   useEffect(() => {
-    localStorage.setItem('zen_theme', theme);
+    storage.saveTheme(theme);
     
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
@@ -170,8 +189,9 @@ const App: React.FC = () => {
     }
   };
 
-  const handleClearData = () => {
+  const handleClearData = async () => {
     if (confirm('Are you sure you want to delete all notes and projects? This cannot be undone.')) {
+      await storage.clearAllData();
       setProjects([]);
       setNotes([]);
       setActiveProjectId(QUICK_NOTES_VIEW_ID);
@@ -202,6 +222,14 @@ const App: React.FC = () => {
   };
 
   const effectiveThemeIsDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  if (!isDataLoaded) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-slate-950 text-gray-400">
+        <Loader2 className="animate-spin" size={32} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full bg-white dark:bg-slate-950 text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-200">
