@@ -5,7 +5,7 @@ import { Workspace } from './components/Workspace';
 import { QuickNotesView } from './components/QuickNotesView';
 import { SettingsModal } from './components/SettingsModal';
 import { Project, Note, NoteType, Theme } from './types';
-import { Sun, Moon, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { storage } from './storage';
 
 // Utility for ID generation since we don't have external libs
@@ -221,8 +221,6 @@ const App: React.FC = () => {
     });
   };
 
-  const effectiveThemeIsDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-
   if (!isDataLoaded) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-slate-950 text-gray-400">
@@ -246,20 +244,12 @@ const App: React.FC = () => {
         onDeleteNote={handleDeleteNote}
         onNavigate={handleNavigate}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        theme={theme}
+        onToggleTheme={toggleQuickTheme}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="h-14 border-b border-gray-100 dark:border-slate-800 flex items-center justify-end px-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur-md z-20 flex-shrink-0">
-          <div className="flex items-center gap-2 z-10">
-            <button 
-              onClick={toggleQuickTheme}
-              className="p-2 text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition-all"
-              title="Toggle Theme"
-            >
-              {effectiveThemeIsDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-          </div>
-        </div>
+        {/* Top bar removed here, now handled by specific views */}
 
         {activeProjectId === QUICK_NOTES_VIEW_ID ? (
             <QuickNotesView 

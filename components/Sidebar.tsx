@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil } from 'lucide-react';
-import { Project, Note, NoteType, SearchOptions } from '../types';
+import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil, Sun, Moon } from 'lucide-react';
+import { Project, Note, NoteType, SearchOptions, Theme } from '../types';
 
 interface SidebarProps {
   projects: Project[];
@@ -16,6 +16,8 @@ interface SidebarProps {
   onDeleteNote: (id: string) => void;
   onOpenSettings: () => void;
   onNavigate: (type: 'project' | 'note', id: string, searchQuery?: string) => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
 type SidebarTab = 'projects' | 'search';
@@ -32,7 +34,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddNote,
   onDeleteNote,
   onOpenSettings,
-  onNavigate
+  onNavigate,
+  theme,
+  onToggleTheme
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<SidebarTab>('projects');
@@ -229,6 +233,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       });
       return map;
   }, [notes]);
+
+  const effectiveThemeIsDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   return (
     <aside className={`${isCollapsed ? 'w-20' : 'w-80'} bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 h-full flex flex-col transition-all duration-300 ease-in-out relative z-30 flex-shrink-0 group`}>
@@ -443,7 +449,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
              )}
           </div>
       </div>
-      <div className="p-4 border-t border-gray-200 dark:border-slate-800 flex-shrink-0 bg-gray-50 dark:bg-slate-900 z-20">
+      <div className="p-4 border-t border-gray-200 dark:border-slate-800 flex-shrink-0 bg-gray-50 dark:bg-slate-900 z-20 flex flex-col gap-2">
+        <button 
+          onClick={onToggleTheme}
+          className={`w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors ${isCollapsed ? 'justify-center' : ''}`}
+          title="Toggle Theme"
+        >
+          {effectiveThemeIsDark ? <Sun size={20} /> : <Moon size={20} />}
+          {!isCollapsed && <span>Theme</span>}
+        </button>
         <button onClick={onOpenSettings} className={`w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors ${isCollapsed ? 'justify-center' : ''}`}><Settings size={20} />{!isCollapsed && <span>Settings</span>}</button>
       </div>
     </aside>

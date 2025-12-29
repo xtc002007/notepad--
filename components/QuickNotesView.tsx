@@ -1,6 +1,7 @@
+
 import React, { useState, useMemo } from 'react';
 import { Note, Project, NoteType } from '../types';
-import { Plus, Calendar, ArrowRight, X, Code, CheckCircle2 } from 'lucide-react';
+import { Plus, Calendar, ArrowRight, X, Code, CheckCircle2, Zap } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface QuickNotesViewProps {
@@ -67,23 +68,33 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
   }, [highlightNoteId]);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-gray-50/50 dark:bg-slate-900/50 relative transition-colors">
-       {/* Header */}
-       <header className="px-8 py-6 bg-white dark:bg-slate-950 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between shadow-sm z-10 transition-colors">
-         <div>
-            <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                Quick Notes
-                <span className="text-xs font-normal px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full">Beta</span>
-            </h1>
-            <p className="text-gray-500 dark:text-slate-500 text-sm mt-1">Capture thoughts instantly • {notes.length} notes</p>
+    <div className="flex-1 flex flex-col h-full bg-gray-50/50 dark:bg-slate-900/50 relative transition-colors overflow-hidden">
+       {/* Header - Styled to match Workspace Header exactly */}
+       <header className="flex-shrink-0 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-950 h-16 px-6 flex items-center justify-between z-10">
+         <div className="flex flex-col min-w-0 flex-1 mr-4">
+            <div className="flex items-center text-xs text-gray-400 dark:text-slate-500 mb-0.5">
+               <span className="mr-1">Context:</span>
+               <span>Local</span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+                <Zap size={18} className="text-orange-500" />
+                <span className="text-lg font-bold text-gray-800 dark:text-white truncate">
+                    Quick Notes
+                </span>
+                <span className="text-xs font-normal px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full ml-2">Beta</span>
+            </div>
          </div>
-         <button
-           onClick={() => setIsAdding(true)}
-           className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-lg shadow-blue-200 dark:shadow-blue-900/20 transition-all transform hover:scale-105 active:scale-95"
-           title="Add Quick Note"
-         >
-           <Plus size={24} />
-         </button>
+
+         <div className="flex items-center gap-2">
+           <button
+             onClick={() => setIsAdding(true)}
+             className="px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow"
+             title="Add Quick Note"
+           >
+             <Plus size={14} /> New Note
+           </button>
+         </div>
        </header>
 
        {/* Add Modal/Overlay */}
@@ -128,10 +139,10 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
           {notes.length === 0 && !isAdding && (
              <div className="flex flex-col items-center justify-center h-64 text-gray-400 dark:text-slate-600">
                 <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4 text-gray-300 dark:text-slate-500">
-                    <Plus size={32} />
+                    <Zap size={32} />
                 </div>
                 <p className="text-lg font-medium text-gray-500 dark:text-slate-500">No quick notes yet</p>
-                <p className="text-sm">Click the + button top right to start</p>
+                <p className="text-sm">Click the New Note button to start</p>
              </div>
           )}
           

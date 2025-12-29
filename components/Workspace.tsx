@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -44,7 +45,7 @@ const HighlightBackdrop: React.FC<{
   let matchCounter = 0;
 
   return (
-    <div className="font-mono text-sm leading-relaxed p-8 pt-8 text-gray-900 dark:text-gray-200 w-full pointer-events-none whitespace-pre">
+    <div className="font-mono text-sm leading-relaxed p-4 text-gray-900 dark:text-gray-200 w-full pointer-events-none whitespace-pre">
         {parts.map((part, i) => {
             if (part.isMatch) {
                 const id = `match-${matchCounter}`;
@@ -364,7 +365,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
          {viewMode === 'raw' && (
             <div 
                 ref={lineNumbersRef}
-                className="flex-shrink-0 w-12 bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 pt-8 pb-8 text-right pr-3 select-none overflow-hidden"
+                className="flex-shrink-0 w-12 bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 pt-4 pb-4 text-right pr-3 select-none overflow-hidden"
                 style={{ fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.625' }}
             >
                 {Array.from({ length: lineCount }).map((_, i) => (
@@ -378,7 +379,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             {viewMode === 'markdown' ? (
                 <div 
                     ref={previewContainerRef}
-                    className="h-full w-full overflow-y-auto custom-scrollbar prose dark:prose-invert max-w-none p-8 cursor-text"
+                    className="h-full w-full overflow-y-auto custom-scrollbar prose dark:prose-invert max-w-none p-4 cursor-text"
                     onDoubleClick={() => setViewMode('raw')}
                     title="Double click to edit"
                 >
@@ -413,7 +414,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                         onChange={(e) => onUpdateNoteContent(activeNote.id, e.target.value)}
                         onScroll={handleScroll}
                         spellCheck={false}
-                        className={`absolute inset-0 z-10 w-full h-full p-8 font-mono text-sm leading-relaxed whitespace-pre overflow-auto bg-transparent resize-none outline-none custom-scrollbar ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white selection:bg-blue-200/50 dark:selection:bg-blue-800/50' : 'text-gray-900 dark:text-gray-200'}`}
+                        className={`absolute inset-0 z-10 w-full h-full p-4 font-mono text-sm leading-relaxed whitespace-pre overflow-auto bg-transparent resize-none outline-none custom-scrollbar ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white selection:bg-blue-200/50 dark:selection:bg-blue-800/50' : 'text-gray-900 dark:text-gray-200'}`}
                         placeholder="Start typing..."
                     />
                 </div>
