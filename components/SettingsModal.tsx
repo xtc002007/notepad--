@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { X, Moon, Sun, Monitor, Trash2, Download } from 'lucide-react';
 import { Theme } from '../types';
@@ -124,7 +125,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </section>
 
           <div className="pt-4 border-t border-gray-100 dark:border-slate-800 text-center">
-             <p className="text-xs text-gray-400 dark:text-slate-600">ZenNote v1.0.0</p>
+             <p className="text-xs text-gray-400 dark:text-slate-600">Notepad-- v1.0.0</p>
           </div>
 
         </div>
