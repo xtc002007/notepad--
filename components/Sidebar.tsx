@@ -248,10 +248,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex flex-col border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
           <div className={`flex items-center h-14 px-3 ${isCollapsed ? 'justify-center py-4 h-auto' : ''}`}>
               <div className={`flex bg-gray-200/50 dark:bg-slate-800/50 rounded-lg p-1 transition-all ${isCollapsed ? 'flex-col gap-2 bg-transparent dark:bg-transparent p-0' : 'w-full grid grid-cols-2 gap-1'}`}>
-                  <button onClick={() => handleTabChange('projects')} className={`flex items-center justify-center gap-2 py-1.5 rounded-md transition-all text-sm font-medium ${activeTab === 'projects' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-500'}`}>
+                  <button onClick={() => handleTabChange('projects')} className={`flex items-center justify-center gap-2 py-1.5 rounded-md transition-all text-sm font-medium ${activeTab === 'projects' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-500'}`} title="Explorer">
                       <Folder size={18} />{!isCollapsed && <span>Explorer</span>}
                   </button>
-                  <button onClick={() => handleTabChange('search')} className={`flex items-center justify-center gap-2 py-1.5 rounded-md transition-all text-sm font-medium ${activeTab === 'search' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-500'}`}>
+                  <button onClick={() => handleTabChange('search')} className={`flex items-center justify-center gap-2 py-1.5 rounded-md transition-all text-sm font-medium ${activeTab === 'search' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-500'}`} title="Search">
                       <Search size={18} />{!isCollapsed && <span>Search</span>}
                   </button>
               </div>
@@ -279,7 +279,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
 
               <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 select-none">
-                <button onClick={() => onSelectProject('project', 'quick_notes')} className={`w-full text-left py-2 flex items-center gap-3 text-sm transition-all mb-1 ${activeProjectId === 'quick_notes' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-r-2 border-blue-500' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'} ${isCollapsed ? 'justify-center px-2' : 'px-4'}`}>
+                <button onClick={() => onSelectProject('project', 'quick_notes')} className={`w-full text-left py-2 flex items-center gap-3 text-sm transition-all mb-1 ${activeProjectId === 'quick_notes' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-r-2 border-blue-500' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'} ${isCollapsed ? 'justify-center px-2' : 'px-4'}`} title="Quick Notes">
                   <Zap size={18} className={activeProjectId === 'quick_notes' ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500'} />
                   {!isCollapsed && <span className="font-medium truncate">Quick Notes</span>}
                 </button>
@@ -295,8 +295,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                     return (
                         <div key={project.id} className="mb-0.5">
-                            <div className={`w-full flex items-center text-sm transition-all group/row relative ${isProjectActive && isCollapsed ? 'bg-blue-100 dark:bg-blue-900/30' : ''}`} onClick={() => !isRenaming && onSelectProject('project', project.id)}>
-                                <button onClick={(e) => !isCollapsed && toggleProjectExpand(e, project.id)} className={`p-2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 ${isCollapsed ? 'hidden' : ''}`}>
+                            <div className={`w-full flex items-center text-sm transition-all group/row relative ${isProjectActive && isCollapsed ? 'bg-blue-100 dark:bg-blue-900/30' : ''}`} onClick={() => !isRenaming && onSelectProject('project', project.id)} title={project.name}>
+                                <button onClick={(e) => toggleProjectExpand(e, project.id)} className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
                                     {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 </button>
                                 
@@ -354,9 +354,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     </div>
                                 )}
                             </div>
-                            {!isCollapsed && isExpanded && (
-                                <div className="ml-7 border-l border-gray-200 dark:border-slate-800">
-                                    {isCreatingNote && (
+                            {isExpanded && (
+                                <div className={`${isCollapsed ? 'ml-2' : 'ml-7'} border-l border-gray-200 dark:border-slate-800`}>
+                                    {isCreatingNote && !isCollapsed && (
                                         <div className="px-3 py-1.5 animate-in slide-in-from-top-1">
                                             <form onSubmit={handleCreateNoteSubmit} className="flex gap-1 items-center">
                                                 <FileText size={14} className="text-gray-400" />
@@ -364,20 +364,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             </form>
                                         </div>
                                     )}
-                                    {projectNotes.length === 0 && !isCreatingNote && <div className="px-3 py-1 text-xs text-gray-400 italic">Empty</div>}
+                                    {projectNotes.length === 0 && !isCreatingNote && !isCollapsed && <div className="px-3 py-1 text-xs text-gray-400 italic">Empty</div>}
                                     {projectNotes.map(note => (
                                         <div key={note.id} className="relative group/note">
-                                            <button onClick={() => onNavigate('note', note.id)} className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm transition-colors ${activeNoteId === note.id ? 'text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/20 rounded-r' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400'}`}>
-                                                {note.type === NoteType.TEXT ? <FileText size={14} /> : <File size={14} />}
-                                                <span className="truncate pr-4">{note.title || (note.type === NoteType.TEXT ? 'Untitled Note' : 'File')}</span>
-                                            </button>
                                             <button 
-                                                onClick={(e) => handleDeleteNoteClick(e, note.id)}
-                                                className="absolute right-1 top-1.5 p-0.5 text-gray-300 hover:text-red-500 dark:text-slate-600 dark:hover:text-red-400 opacity-0 group-hover/note:opacity-100 transition-opacity bg-white dark:bg-slate-900 shadow-sm rounded"
-                                                title="Delete Note"
+                                              onClick={() => onNavigate('note', note.id)} 
+                                              className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm transition-colors ${activeNoteId === note.id ? 'text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/20 rounded-r' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400'}`}
+                                              title={note.title || 'Untitled'}
                                             >
-                                                <Trash2 size={12} />
+                                                {note.type === NoteType.TEXT ? <FileText size={14} className="flex-shrink-0" /> : <File size={14} className="flex-shrink-0" />}
+                                                <span className={`truncate ${isCollapsed ? 'w-full text-[10px]' : 'pr-4'}`}>{note.title || (note.type === NoteType.TEXT ? 'Untitled Note' : 'File')}</span>
                                             </button>
+                                            {!isCollapsed && (
+                                              <button 
+                                                  onClick={(e) => handleDeleteNoteClick(e, note.id)}
+                                                  className="absolute right-1 top-1.5 p-0.5 text-gray-300 hover:text-red-500 dark:text-slate-600 dark:hover:text-red-400 opacity-0 group-hover/note:opacity-100 transition-opacity bg-white dark:bg-slate-900 shadow-sm rounded"
+                                                  title="Delete Note"
+                                              >
+                                                  <Trash2 size={12} />
+                                              </button>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -388,6 +394,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </nav>
           </div>
           
+           {/* Search View */}
            <div className={`absolute inset-0 flex flex-col bg-gray-50 dark:bg-slate-900 transition-opacity duration-300 ${activeTab === 'search' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
              {!isCollapsed && (
                 <>
@@ -425,7 +432,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <div className="py-2">
                                 <div className="px-3 pb-1 text-[10px] font-bold text-gray-400 uppercase">Content</div>
                                 {searchResults.notes.map(n => {
-                                    // Calculate display title based on content if title is generic
                                     const displayTitle = (n.title && n.title !== 'Untitled') 
                                         ? n.title 
                                         : (n.content 
@@ -458,7 +464,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {effectiveThemeIsDark ? <Sun size={20} /> : <Moon size={20} />}
           {!isCollapsed && <span>Theme</span>}
         </button>
-        <button onClick={onOpenSettings} className={`w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors ${isCollapsed ? 'justify-center' : ''}`}><Settings size={20} />{!isCollapsed && <span>Settings</span>}</button>
+        <button onClick={onOpenSettings} className={`w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors ${isCollapsed ? 'justify-center' : ''}`} title="Settings"><Settings size={20} />{!isCollapsed && <span>Settings</span>}</button>
       </div>
     </aside>
   );

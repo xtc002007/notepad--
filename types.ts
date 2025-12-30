@@ -1,3 +1,4 @@
+
 export interface Project {
   id: string;
   name: string;
@@ -34,3 +35,33 @@ export interface SearchOptions {
 }
 
 export type Theme = 'light' | 'dark' | 'system';
+export type AppFont = 'sans' | 'serif' | 'mono';
+
+export interface AppSettings {
+  // Appearance
+  theme: Theme;
+  
+  // Editor - Typography
+  fontFamily: AppFont;
+  fontSize: number; // px
+  lineHeight: number; // unitless (e.g. 1.5)
+  
+  // Editor - Behavior
+  showLineNumbers: boolean;
+  wordWrap: boolean;
+  highlightActiveLine: boolean;
+  
+  // General
+  reduceMotion: boolean;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'system',
+  fontFamily: 'sans',
+  fontSize: 15,
+  lineHeight: 1.6,
+  showLineNumbers: true,
+  wordWrap: true,
+  highlightActiveLine: true,
+  reduceMotion: false,
+};

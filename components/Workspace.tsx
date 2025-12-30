@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Project, Note, NoteType, SearchOptions } from '../types';
+import { Project, Note, NoteType, SearchOptions, AppSettings } from '../types';
 import { File as FileIcon, Search, CaseSensitive, WholeWord, X, ChevronDown, ChevronUp, FileText, Code, Eye, Pencil } from 'lucide-react';
 
 interface WorkspaceProps {
@@ -15,6 +15,7 @@ interface WorkspaceProps {
   onRenameNote: (noteId: string, newTitle: string) => void;
   onUpdateNoteContent: (noteId: string, newContent: string) => void;
   highlightNoteId?: string;
+  settings: AppSettings; // Added settings prop
 }
 
 // --- Helper: Highlight logic for raw text ---
@@ -38,21 +39,30 @@ const HighlightBackdrop: React.FC<{
   content: string;
   query: string;
   options: SearchOptions;
-}> = ({ content, query, options }) => {
+  settings: AppSettings; // Need settings for font styles
+}> = ({ content, query, options, settings }) => {
   if (!query) return null;
   
   const parts = getHighlightParts(content, query, options);
   let matchCounter = 0;
 
   return (
-    <div className="font-mono text-sm leading-relaxed p-4 text-gray-900 dark:text-gray-200 w-full pointer-events-none whitespace-pre">
+    <div 
+        className={`w-full pointer-events-none ${settings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
+        style={{
+             fontFamily: settings.fontFamily === 'mono' ? 'monospace' : 'inherit',
+             fontSize: `${settings.fontSize}px`,
+             lineHeight: settings.lineHeight,
+             padding: '1rem', // match textarea padding
+        }}
+    >
         {parts.map((part, i) => {
             if (part.isMatch) {
                 const id = `match-${matchCounter}`;
                 matchCounter++;
-                return <mark id={id} key={i} className="bg-yellow-300/60 dark:bg-yellow-600/60 text-inherit rounded-[1px]">{part.text}</mark>;
+                return <mark id={id} key={i} className="bg-yellow-300/60 dark:bg-yellow-600/60 text-transparent rounded-[1px]">{part.text}</mark>;
             }
-            return <span key={i}>{part.text}</span>;
+            return <span key={i} className="text-transparent">{part.text}</span>;
         })}
         <span className="invisible">.</span>
     </div>
@@ -98,6 +108,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   onRenameProject,
   onRenameNote,
   onUpdateNoteContent,
+  settings,
 }) => {
   // View State
   const [viewMode, setViewMode] = useState<'raw' | 'markdown'>('raw');
@@ -179,8 +190,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   const handleNextMatch = () => {
       if (searchMatchesCount === 0) return;
       const nextIndex = (currentMatchIndex + 1) % searchMatchesCount;
-      scrollToMatch(nextIndex); // Update index inside function or after? 
-      // Logic fix: setState is async. Pass nextIndex directly.
+      scrollToMatch(nextIndex); 
   };
 
   const handlePrevMatch = () => {
@@ -255,6 +265,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({
           </div>
       );
   }
+
+  // Dynamic Styles
+  const editorFontFamily = settings.fontFamily === 'mono' ? 'monospace' : settings.fontFamily === 'serif' ? 'serif' : 'sans-serif';
 
   return (
     <main className="flex-1 flex flex-col h-full relative bg-white dark:bg-slate-950 transition-colors overflow-hidden">
@@ -362,11 +375,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({
       <div className="flex-1 overflow-hidden relative group/editor flex">
          
          {/* Line Numbers Gutter (Only in Source Mode) */}
-         {viewMode === 'raw' && (
+         {viewMode === 'raw' && settings.showLineNumbers && (
             <div 
                 ref={lineNumbersRef}
-                className="flex-shrink-0 w-12 bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 pt-4 pb-4 text-right pr-3 select-none overflow-hidden"
-                style={{ fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.625' }}
+                className="flex-shrink-0 bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 pt-4 pb-4 text-right pr-3 select-none overflow-hidden"
+                style={{ 
+                    fontFamily: editorFontFamily,
+                    fontSize: `${settings.fontSize}px`, 
+                    lineHeight: settings.lineHeight,
+                    width: `${Math.max(3, lineCount.toString().length) * settings.fontSize * 0.8}px` // Dynamic width based on digits
+                }}
             >
                 {Array.from({ length: lineCount }).map((_, i) => (
                     <div key={i} className="text-gray-300 dark:text-slate-600">{i + 1}</div>
@@ -382,6 +400,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                     className="h-full w-full overflow-y-auto custom-scrollbar prose dark:prose-invert max-w-none p-4 cursor-text"
                     onDoubleClick={() => setViewMode('raw')}
                     title="Double click to edit"
+                    style={{
+                        fontFamily: settings.fontFamily === 'serif' ? 'serif' : 'sans-serif', // Markdown usually doesn't strictly follow mono unless code blocks
+                        fontSize: `${settings.fontSize}px`,
+                        lineHeight: settings.lineHeight,
+                    }}
                 >
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                         {activeNote.content}
@@ -401,21 +424,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                 content={activeNote.content} 
                                 query={searchQuery} 
                                 options={searchOptions} 
+                                settings={settings}
                             />
                         </div>
                     )}
                     
-                    {/* Editable Textarea 
-                        NOTE: Using whitespace-pre (No Wrap) ensures line numbers align perfectly. 
-                    */}
+                    {/* Editable Textarea */}
                     <textarea
                         ref={textareaRef}
                         value={activeNote.content}
                         onChange={(e) => onUpdateNoteContent(activeNote.id, e.target.value)}
                         onScroll={handleScroll}
                         spellCheck={false}
-                        className={`absolute inset-0 z-10 w-full h-full p-4 font-mono text-sm leading-relaxed whitespace-pre overflow-auto bg-transparent resize-none outline-none custom-scrollbar ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white selection:bg-blue-200/50 dark:selection:bg-blue-800/50' : 'text-gray-900 dark:text-gray-200'}`}
+                        className={`absolute inset-0 z-10 w-full h-full p-4 overflow-auto bg-transparent resize-none outline-none custom-scrollbar ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white selection:bg-blue-200/50 dark:selection:bg-blue-800/50' : 'text-gray-900 dark:text-gray-200'} ${settings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'} ${settings.highlightActiveLine ? 'focus:ring-2 ring-inset ring-blue-500/10' : ''}`}
                         placeholder="Start typing..."
+                        style={{
+                            fontFamily: editorFontFamily,
+                            fontSize: `${settings.fontSize}px`,
+                            lineHeight: settings.lineHeight,
+                        }}
                     />
                 </div>
             )}

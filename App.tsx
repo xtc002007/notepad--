@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { Workspace } from './components/Workspace';
 import { QuickNotesView } from './components/QuickNotesView';
 import { SettingsModal } from './components/SettingsModal';
-import { Project, Note, NoteType, Theme } from './types';
+import { Project, Note, NoteType, Theme, AppSettings } from './types';
 import { Loader2 } from 'lucide-react';
 import { storage } from './storage';
 
@@ -22,8 +22,8 @@ const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
 
-  // Theme State (Sync initialization for UI stability)
-  const [theme, setTheme] = useState<Theme>(() => storage.getTheme());
+  // Settings State
+  const [settings, setSettings] = useState<AppSettings>(() => storage.getSettings());
 
   const [activeProjectId, setActiveProjectId] = useState<string | null>(QUICK_NOTES_VIEW_ID); 
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null); 
@@ -64,20 +64,26 @@ const App: React.FC = () => {
     }
   }, [notes, isDataLoaded]);
 
-  // --- Theme Handling ---
+  // --- Settings Persistence & Application ---
   useEffect(() => {
-    storage.saveTheme(theme);
+    storage.saveSettings(settings);
     
+    // Apply Theme
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
 
-    if (theme === 'system') {
+    if (settings.theme === 'system') {
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       root.classList.add(systemTheme);
     } else {
-      root.classList.add(theme);
+      root.classList.add(settings.theme);
     }
-  }, [theme]);
+
+    // Apply Global Font Family (Fallback/UI)
+    // We update a CSS variable or specific class logic here if needed, 
+    // but Workspace handles the specific editor font logic.
+  }, [settings]);
+
 
   // Derived State
   const sortedProjects = useMemo(() => {
@@ -201,7 +207,7 @@ const App: React.FC = () => {
   };
 
   const handleExportData = () => {
-    const dataStr = JSON.stringify({ projects, notes }, null, 2);
+    const dataStr = JSON.stringify({ projects, notes, settings }, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -213,11 +219,12 @@ const App: React.FC = () => {
   };
 
   const toggleQuickTheme = () => {
-    setTheme(current => {
-      if (current === 'light') return 'dark';
-      if (current === 'dark') return 'light';
-      const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      return isSystemDark ? 'light' : 'dark';
+    setSettings(prev => {
+        let newTheme: Theme;
+        if (prev.theme === 'light') newTheme = 'dark';
+        else if (prev.theme === 'dark') newTheme = 'light';
+        else newTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark';
+        return { ...prev, theme: newTheme };
     });
   };
 
@@ -229,8 +236,11 @@ const App: React.FC = () => {
     );
   }
 
+  // Map internal font state to Tailwind classes (for UI elements, distinct from Editor)
+  const fontClass = settings.fontFamily === 'serif' ? 'font-serif' : settings.fontFamily === 'mono' ? 'font-mono' : 'font-sans';
+
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-slate-950 text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-200">
+    <div className={`flex h-screen w-full bg-white dark:bg-slate-950 text-gray-900 dark:text-gray-100 overflow-hidden transition-colors duration-200 ${fontClass}`}>
       <Sidebar 
         projects={sortedProjects} 
         notes={notes}
@@ -244,13 +254,11 @@ const App: React.FC = () => {
         onDeleteNote={handleDeleteNote}
         onNavigate={handleNavigate}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        theme={theme}
+        theme={settings.theme}
         onToggleTheme={toggleQuickTheme}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top bar removed here, now handled by specific views */}
-
         {activeProjectId === QUICK_NOTES_VIEW_ID ? (
             <QuickNotesView 
                 notes={activeNotes}
@@ -271,6 +279,7 @@ const App: React.FC = () => {
                 onRenameNote={handleRenameNote}
                 onUpdateNoteContent={handleUpdateNoteContent}
                 highlightNoteId={highlightNoteId}
+                settings={settings}
             />
         )}
       </div>
@@ -278,8 +287,8 @@ const App: React.FC = () => {
       <SettingsModal 
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        theme={theme}
-        onThemeChange={setTheme}
+        settings={settings}
+        onUpdateSettings={setSettings}
         onClearData={handleClearData}
         onExportData={handleExportData}
       />

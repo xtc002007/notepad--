@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { Note, Project, NoteType } from '../types';
 import { Plus, Calendar, ArrowRight, X, Code, CheckCircle2, Zap } from 'lucide-react';
@@ -135,7 +134,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
        )}
 
        {/* List */}
-       <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 space-y-4">
+       <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {notes.length === 0 && !isAdding && (
              <div className="flex flex-col items-center justify-center h-64 text-gray-400 dark:text-slate-600">
                 <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4 text-gray-300 dark:text-slate-500">
@@ -150,10 +149,10 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
             <div 
                 key={note.id} 
                 ref={el => { noteRefs.current[note.id] = el; }}
-                className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl p-5 shadow-sm hover:shadow-md transition-all duration-200 group relative"
+                className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-200 group relative"
             >
                 {/* Header: Date & Actions */}
-                <div className="flex justify-between items-start mb-3 border-b border-gray-50 dark:border-slate-800 pb-2">
+                <div className="flex justify-between items-start mb-2 border-b border-gray-50 dark:border-slate-800 pb-2">
                     <div className="flex items-center text-xs font-medium text-gray-400 dark:text-slate-500 gap-2 bg-gray-50 dark:bg-slate-800 px-2 py-1 rounded">
                         <Calendar size={12} />
                         <span>{format(note.createdAt, 'MMM d, yyyy · HH:mm')}</span>

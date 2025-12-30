@@ -1,5 +1,5 @@
 
-import { Project, Note, Theme } from './types';
+import { Project, Note, AppSettings, DEFAULT_SETTINGS } from './types';
 
 // Define the interface for any storage provider
 export interface StorageService {
@@ -9,8 +9,8 @@ export interface StorageService {
   getNotes(): Promise<Note[]>;
   saveNotes(notes: Note[]): Promise<void>;
   
-  getTheme(): Theme;
-  saveTheme(theme: Theme): void;
+  getSettings(): AppSettings;
+  saveSettings(settings: AppSettings): void;
   
   clearAllData(): Promise<void>;
 }
@@ -19,7 +19,7 @@ export interface StorageService {
 const STORAGE_KEYS = {
   PROJECTS: 'zen_projects',
   NOTES: 'zen_notes',
-  THEME: 'zen_theme',
+  SETTINGS: 'zen_settings', // Unified settings key
 };
 
 // Implementation for LocalStorage
@@ -60,19 +60,27 @@ export class LocalStorageService implements StorageService {
     }
   }
 
-  // Theme is often needed synchronously to prevent flash of unstyled content
-  getTheme(): Theme {
-    return (localStorage.getItem(STORAGE_KEYS.THEME) as Theme) || 'system';
+  getSettings(): AppSettings {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+      if (!saved) return DEFAULT_SETTINGS;
+      
+      // Merge saved settings with defaults to handle new keys in future updates
+      const parsed = JSON.parse(saved);
+      return { ...DEFAULT_SETTINGS, ...parsed };
+    } catch (e) {
+      return DEFAULT_SETTINGS;
+    }
   }
 
-  saveTheme(theme: Theme): void {
-    localStorage.setItem(STORAGE_KEYS.THEME, theme);
+  saveSettings(settings: AppSettings): void {
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
   }
 
   async clearAllData(): Promise<void> {
     localStorage.removeItem(STORAGE_KEYS.PROJECTS);
     localStorage.removeItem(STORAGE_KEYS.NOTES);
-    // We optionally keep the theme
+    // We purposefully keep settings
   }
 }
 
