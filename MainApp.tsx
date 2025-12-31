@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
-import { Project, Note, NoteType, Theme, AppSettings, DEFAULT_SETTINGS } from './types';
+import { Project, Note, NoteType, Theme, AppSettings, DEFAULT_SETTINGS, UserHabits, DEFAULT_USER_HABITS } from './types';
 import { storage } from './storage';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
@@ -27,7 +27,10 @@ const MainApp: React.FC = () => {
   // Settings State
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(QUICK_NOTES_VIEW_ID);
+  // User Habits State
+  const [userHabits, setUserHabits] = useState<UserHabits>(DEFAULT_USER_HABITS);
+
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null); // Start null to wait for habits
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [highlightNoteId, setHighlightNoteId] = useState<string | undefined>(undefined);
   const [navigatedSearchQuery, setNavigatedSearchQuery] = useState<string>(''); // For passing search context
@@ -44,14 +47,20 @@ const MainApp: React.FC = () => {
     const loadData = async () => {
       try {
         await storage.init();
-        const [loadedProjects, loadedNotes, loadedSettings] = await Promise.all([
+        const [loadedProjects, loadedNotes, loadedSettings, loadedHabits] = await Promise.all([
           storage.getProjects(),
           storage.getNotes(),
-          storage.getSettings()
+          storage.getSettings(),
+          storage.getUserHabits()
         ]);
         setProjects(loadedProjects);
         setNotes(loadedNotes);
         setSettings(loadedSettings);
+        setUserHabits(loadedHabits);
+
+        // Set initial active state based on habits
+        setActiveProjectId(loadedHabits.lastActiveProjectId || QUICK_NOTES_VIEW_ID);
+        setActiveNoteId(loadedHabits.lastActiveNoteId);
       } catch (error) {
         console.error("Failed to load initial data", error);
       } finally {
@@ -114,6 +123,13 @@ const MainApp: React.FC = () => {
     // but Workspace handles the specific editor font logic.
   }, [settings, isDataLoaded]);
 
+  // --- Habits Persistence ---
+  useEffect(() => {
+    if (isDataLoaded) {
+      storage.saveUserHabits(userHabits);
+    }
+  }, [userHabits, isDataLoaded]);
+
 
   // Derived State
   const sortedProjects = useMemo(() => {
@@ -163,6 +179,7 @@ const MainApp: React.FC = () => {
         if (activeProjectId === projectId) {
           setActiveProjectId(QUICK_NOTES_VIEW_ID);
           setActiveNoteId(null);
+          setUserHabits(prev => ({ ...prev, lastActiveProjectId: QUICK_NOTES_VIEW_ID, lastActiveNoteId: null }));
         }
         storage.deleteProject(projectId);
         setConfirmState(null);
@@ -196,6 +213,7 @@ const MainApp: React.FC = () => {
 
     setActiveProjectId(pid);
     setActiveNoteId(newNote.id);
+    setUserHabits(prev => ({ ...prev, lastActiveProjectId: pid, lastActiveNoteId: newNote.id }));
   };
 
   const handleRenameNote = (noteId: string, newTitle: string) => {
@@ -225,6 +243,7 @@ const MainApp: React.FC = () => {
         setNotes(prev => prev.filter(n => n.id !== noteId));
         if (activeNoteId === noteId) {
           setActiveNoteId(null);
+          setUserHabits(prev => ({ ...prev, lastActiveNoteId: null }));
         }
         storage.deleteNote(noteId);
         setConfirmState(null);
@@ -238,12 +257,17 @@ const MainApp: React.FC = () => {
       const updatedNote = { ...note, projectId: targetProjectId };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
       storage.saveNote(updatedNote);
+      if (activeNoteId === noteId) {
+        setUserHabits(prev => ({ ...prev, lastActiveProjectId: targetProjectId }));
+      }
     }
   };
 
   const handleNavigate = (type: 'project' | 'note', id: string, searchQuery?: string) => {
     if (type === 'project') {
       setActiveProjectId(id);
+      setUserHabits(prev => ({ ...prev, lastActiveProjectId: id, lastActiveNoteId: null }));
+      setNavigatedSearchQuery(searchQuery || ''); // Preserve search query if provided
 
       // Auto-open first note if available
       const projectNotes = notes
@@ -252,17 +276,22 @@ const MainApp: React.FC = () => {
 
       if (projectNotes.length > 0) {
         setActiveNoteId(projectNotes[0].id);
+        setUserHabits(prev => ({ ...prev, lastActiveNoteId: projectNotes[0].id }));
       } else {
         setActiveNoteId(null);
       }
 
       setHighlightNoteId(undefined);
-      setNavigatedSearchQuery('');
-    } else {
+    } else { // type === 'note'
       const note = notes.find(n => n.id === id);
       if (note) {
         setActiveProjectId(note.projectId === 'uncategorized' ? null : note.projectId);
         setActiveNoteId(id);
+        setUserHabits(prev => ({
+          ...prev,
+          lastActiveProjectId: note.projectId === 'uncategorized' ? null : note.projectId,
+          lastActiveNoteId: id
+        }));
         setHighlightNoteId(id);
         setNavigatedSearchQuery(searchQuery || '');
         setTimeout(() => setHighlightNoteId(undefined), 2000);
@@ -351,16 +380,23 @@ const MainApp: React.FC = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
           theme={settings.theme}
           onToggleTheme={toggleQuickTheme}
+          expandedProjectIds={userHabits.expandedProjectIds}
+          onUpdateExpandedProjects={(ids) => setUserHabits(prev => ({ ...prev, expandedProjectIds: ids }))}
         />
 
         <div className="flex-1 flex flex-col min-w-0">
           {activeProjectId === QUICK_NOTES_VIEW_ID ? (
             <QuickNotesView
               notes={activeNotes}
-              projects={projects}
               onAddNote={handleAddNote}
               onUpdateNoteContent={handleUpdateNoteContent}
-              onMoveNote={handleMoveNote}
+              collapsedNoteIds={userHabits.collapsedQuickNoteIds}
+              onToggleCollapse={(id) => setUserHabits(prev => ({
+                ...prev,
+                collapsedQuickNoteIds: prev.collapsedQuickNoteIds.includes(id)
+                  ? prev.collapsedQuickNoteIds.filter(cid => cid !== id)
+                  : [...prev.collapsedQuickNoteIds, id]
+              }))}
               highlightNoteId={highlightNoteId}
               searchQuery={navigatedSearchQuery}
             />
@@ -376,6 +412,8 @@ const MainApp: React.FC = () => {
               onUpdateNoteContent={handleUpdateNoteContent}
               highlightNoteId={highlightNoteId}
               settings={settings}
+              viewMode={userHabits.editorViewMode}
+              onViewModeChange={(mode) => setUserHabits(prev => ({ ...prev, editorViewMode: mode }))}
             />
           )}
         </div>

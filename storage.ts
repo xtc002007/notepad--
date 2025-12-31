@@ -1,5 +1,5 @@
 
-import { Project, Note, AppSettings, DEFAULT_SETTINGS, NoteType } from './types';
+import { Project, Note, AppSettings, DEFAULT_SETTINGS, NoteType, UserHabits, DEFAULT_USER_HABITS } from './types';
 import Database from '@tauri-apps/plugin-sql';
 import { mkdir, writeFile, readFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { appDataDir, join } from '@tauri-apps/api/path';
@@ -17,6 +17,8 @@ export interface StorageService {
 
     getSettings(): Promise<AppSettings>;
     saveSettings(settings: AppSettings): Promise<void>;
+    getUserHabits(): Promise<UserHabits>;
+    saveUserHabits(habits: UserHabits): Promise<void>;
 
     clearAllData(): Promise<void>;
     saveAsset(file: File): Promise<string>;
@@ -80,6 +82,13 @@ export class SqliteStorageService implements StorageService {
 
             await this.db.execute(`
       CREATE TABLE IF NOT EXISTS settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        json TEXT NOT NULL
+      );
+    `);
+
+            await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS user_habits (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         json TEXT NOT NULL
       );
@@ -155,6 +164,28 @@ export class SqliteStorageService implements StorageService {
         await this.db!.execute(
             'INSERT OR REPLACE INTO settings (id, json) VALUES (1, $1)',
             [JSON.stringify(settings)]
+        );
+    }
+
+    async getUserHabits(): Promise<UserHabits> {
+        if (!this.db) await this.init();
+        const result = await this.db!.select<{ json: string }[]>('SELECT json FROM user_habits WHERE id = 1');
+        if (result.length > 0) {
+            try {
+                const parsed = JSON.parse(result[0].json);
+                return { ...DEFAULT_USER_HABITS, ...parsed };
+            } catch (e) {
+                return DEFAULT_USER_HABITS;
+            }
+        }
+        return DEFAULT_USER_HABITS;
+    }
+
+    async saveUserHabits(habits: UserHabits): Promise<void> {
+        if (!this.db) await this.init();
+        await this.db!.execute(
+            'INSERT OR REPLACE INTO user_habits (id, json) VALUES (1, $1)',
+            [JSON.stringify(habits)]
         );
     }
 

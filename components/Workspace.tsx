@@ -15,7 +15,9 @@ interface WorkspaceProps {
     onRenameNote: (noteId: string, newTitle: string) => void;
     onUpdateNoteContent: (noteId: string, newContent: string) => void;
     highlightNoteId?: string;
-    settings: AppSettings; // Added settings prop
+    settings: AppSettings;
+    viewMode: 'raw' | 'markdown';
+    onViewModeChange: (mode: 'raw' | 'markdown') => void;
 }
 
 // --- Helper: Highlight logic for raw text ---
@@ -39,7 +41,7 @@ const HighlightBackdrop: React.FC<{
     content: string;
     query: string;
     options: SearchOptions;
-    settings: AppSettings; // Need settings for font styles
+    settings: AppSettings;
 }> = ({ content, query, options, settings }) => {
     if (!query) return null;
 
@@ -53,7 +55,7 @@ const HighlightBackdrop: React.FC<{
                 fontFamily: settings.fontFamily === 'mono' ? 'monospace' : 'inherit',
                 fontSize: `${settings.fontSize}px`,
                 lineHeight: settings.lineHeight,
-                padding: '1rem', // match textarea padding
+                padding: '1rem',
             }}
         >
             {parts.map((part, i) => {
@@ -96,7 +98,6 @@ const HighlightElements: React.FC<HighlightElementsProps> = ({ children, query, 
         return <>{children.map((child, i) => <HighlightElements key={i} query={query} options={options}>{child}</HighlightElements>)}</>;
     }
 
-    // React Elements are left alone to let children render
     return <>{children}</>;
 };
 
@@ -109,17 +110,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     onRenameNote,
     onUpdateNoteContent,
     settings,
+    viewMode,
+    onViewModeChange,
 }) => {
-    // View State
-    const [viewMode, setViewMode] = useState<'raw' | 'markdown'>('raw');
-
-    // Search State
     const [isSearchVisible, setIsSearchVisible] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
 
-    // Refs
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
@@ -127,19 +125,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     const projectInputRef = useRef<HTMLInputElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
 
-    // Active Note
     const activeNote = useMemo(() => notes.find(n => n.id === activeNoteId) || null, [notes, activeNoteId]);
 
-    // Search Logic
     useEffect(() => {
         if (initialSearchQuery) {
             setSearchQuery(initialSearchQuery);
             setIsSearchVisible(true);
-            setViewMode('raw');
+            onViewModeChange('raw');
         }
-    }, [initialSearchQuery, activeNoteId]);
+    }, [initialSearchQuery, activeNoteId, onViewModeChange]);
 
-    // Match Calculation
     const searchMatchesCount = useMemo(() => {
         if (!searchQuery || !activeNote || !activeNote.content) return 0;
         const { caseSensitive, wholeWord } = searchOptions;
@@ -152,36 +147,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         } catch { return 0; }
     }, [searchQuery, searchOptions, activeNote]);
 
-    // Scroll to Match Logic
     const scrollToMatch = (index: number) => {
-        // 1. Source Mode Scroll
         if (viewMode === 'raw') {
             const markId = `match-${index}`;
             const markElement = document.getElementById(markId);
-
             if (markElement && textareaRef.current) {
                 const top = markElement.offsetTop;
                 const left = markElement.offsetLeft;
-
                 textareaRef.current.scrollTo({
                     top: top - (textareaRef.current.clientHeight / 2),
                     left: left - 50,
                     behavior: 'smooth'
                 });
             }
-        }
-        // 2. Preview Mode Scroll
-        else if (viewMode === 'markdown' && previewContainerRef.current) {
+        } else if (viewMode === 'markdown' && previewContainerRef.current) {
             const marks = previewContainerRef.current.getElementsByTagName('mark');
             if (marks[index]) {
-                marks[index].scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'center',
-                    inline: 'nearest'
-                });
+                marks[index].scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
             }
         }
-
         setCurrentMatchIndex(index);
     };
 
@@ -189,29 +173,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         const handleJump = (e: any) => {
             const { lineIndex } = e.detail;
             if (!activeNote) return;
-
             if (viewMode === 'raw' && textareaRef.current) {
                 const lineHeight = settings.fontSize * settings.lineHeight;
-                const padding = 16; // 1rem padding
+                const padding = 16;
                 textareaRef.current.scrollTo({
-                    top: lineIndex * lineHeight + padding - 40, // offset a bit for visibility
+                    top: lineIndex * lineHeight + padding - 40,
                     behavior: 'smooth'
                 });
             } else if (viewMode === 'markdown' && previewContainerRef.current) {
                 const lineText = activeNote.content.split('\n')[lineIndex];
                 const cleanText = lineText.replace(/^#+\s+/, '').trim();
                 const headings = previewContainerRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6');
-
-                const targetHeader = Array.from(headings).find(h =>
-                    h.textContent?.includes(cleanText)
-                );
-
-                if (targetHeader) {
-                    targetHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
+                const targetHeader = Array.from(headings).find(h => h.textContent?.includes(cleanText));
+                if (targetHeader) targetHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
         };
-
         window.addEventListener('editor-jump-to-line', handleJump);
         return () => window.removeEventListener('editor-jump-to-line', handleJump);
     }, [viewMode, settings, activeNote]);
@@ -250,18 +226,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         }
     };
 
-    // Line Numbers Calculation
     const lineCount = useMemo(() => {
         if (!activeNote || !activeNote.content) return 1;
         return activeNote.content.split('\n').length;
     }, [activeNote?.content]);
 
-    // Markdown Components with Highlight Support
     const markdownComponents = useMemo(() => {
         const Wrapper = ({ children }: any) => <HighlightElements query={searchQuery} options={searchOptions}>{children}</HighlightElements>;
-
         return {
-            // Block elements
             p: ({ children }: any) => <p className="mb-4"><Wrapper>{children}</Wrapper></p>,
             li: ({ children }: any) => <li><Wrapper>{children}</Wrapper></li>,
             h1: ({ children }: any) => <h1 className="text-2xl font-bold mb-4"><Wrapper>{children}</Wrapper></h1>,
@@ -270,21 +242,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             h4: ({ children }: any) => <h4 className="text-base font-bold mb-2"><Wrapper>{children}</Wrapper></h4>,
             h5: ({ children }: any) => <h5 className="text-sm font-bold mb-1"><Wrapper>{children}</Wrapper></h5>,
             h6: ({ children }: any) => <h6 className="text-xs font-bold mb-1"><Wrapper>{children}</Wrapper></h6>,
-            blockquote: ({ children }: any) => <blockquote className="border-l-4 border-gray-200 pl-4 italic"><Wrapper>{children}</Wrapper></blockquote>,
-
-            // Inline elements
+            blockquote: ({ children }: any) => <blockquote className="border-l-4 border-gray-200 dark:border-slate-800 pl-4 italic"><Wrapper>{children}</Wrapper></blockquote>,
             strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
             em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
             code: ({ children, className }: any) => <code className={className}><Wrapper>{children}</Wrapper></code>,
             a: ({ children, href }: any) => <a href={href} className="text-blue-600 hover:underline"><Wrapper>{children}</Wrapper></a>,
             del: ({ children }: any) => <del><Wrapper>{children}</Wrapper></del>,
-
-            // Tables
-            td: ({ children }: any) => <td className="border px-4 py-2"><Wrapper>{children}</Wrapper></td>,
-            th: ({ children }: any) => <th className="border px-4 py-2 bg-gray-100 dark:bg-slate-800"><Wrapper>{children}</Wrapper></th>,
+            td: ({ children }: any) => <td className="border border-gray-200 dark:border-slate-800 px-4 py-2"><Wrapper>{children}</Wrapper></td>,
+            th: ({ children }: any) => <th className="border border-gray-200 dark:border-slate-800 px-4 py-2 bg-gray-100 dark:bg-slate-800"><Wrapper>{children}</Wrapper></th>,
         };
     }, [searchQuery, searchOptions]);
-
 
     if (!activeNote) {
         return (
@@ -295,13 +262,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         );
     }
 
-    // Dynamic Styles
     const editorFontFamily = settings.fontFamily === 'mono' ? 'monospace' : settings.fontFamily === 'serif' ? 'serif' : 'sans-serif';
 
     return (
         <main className="flex-1 flex flex-col h-full relative bg-white dark:bg-slate-950 transition-colors overflow-hidden">
-
-            {/* Header Bar */}
             <header className="flex-shrink-0 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-950 h-16 px-6 flex items-center justify-between z-10">
                 <div className="flex flex-col min-w-0 flex-1 mr-4">
                     <div className="flex items-center text-xs text-gray-400 dark:text-slate-500 mb-0.5">
@@ -315,16 +279,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                     onChange={(e) => onRenameProject(project.id, e.target.value)}
                                     title="Rename Project"
                                 />
-                                <button
-                                    onClick={() => projectInputRef.current?.focus()}
-                                    className="opacity-0 group-hover/edit-project:opacity-100 p-1 text-gray-400 hover:text-blue-500 transition-opacity"
-                                >
+                                <button onClick={() => projectInputRef.current?.focus()} className="opacity-0 group-hover/edit-project:opacity-100 p-1 text-gray-400 hover:text-blue-500 transition-opacity">
                                     <Pencil size={10} />
                                 </button>
                             </div>
                         ) : <span>Uncategorized</span>}
                     </div>
-
                     <div className="flex items-center gap-2 group/edit-title">
                         {activeNote.type === NoteType.TEXT ? <FileText size={18} className="text-blue-500" /> : <FileIcon size={18} className="text-orange-500" />}
                         <input
@@ -334,27 +294,28 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                             onChange={(e) => onRenameNote(activeNote.id, e.target.value)}
                             placeholder="Untitled Note"
                         />
-                        <button
-                            onClick={() => titleInputRef.current?.focus()}
-                            className="opacity-0 group-hover/edit-title:opacity-100 p-1.5 text-gray-400 hover:text-blue-500 transition-opacity"
-                        >
+                        <button onClick={() => titleInputRef.current?.focus()} className="opacity-0 group-hover/edit-title:opacity-100 p-1.5 text-gray-400 hover:text-blue-500 transition-opacity">
                             <Pencil size={14} />
                         </button>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 bg-gray-100 dark:bg-slate-900 rounded-lg p-1">
+                <div className="flex items-center gap-1 border-l border-gray-100 dark:border-slate-800 pl-4 ml-2">
                     <button
-                        onClick={() => setViewMode('raw')}
-                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${viewMode === 'raw' ? 'bg-white dark:bg-slate-800 shadow text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-500'}`}
+                        onClick={() => onViewModeChange('raw')}
+                        className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 px-3 ${viewMode === 'raw' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                        title="Source Mode"
                     >
-                        <Code size={14} /> Source
+                        <Code size={16} />
+                        <span className="text-xs font-semibold">Source</span>
                     </button>
                     <button
-                        onClick={() => setViewMode('markdown')}
-                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${viewMode === 'markdown' ? 'bg-white dark:bg-slate-800 shadow text-purple-600 dark:text-purple-400' : 'text-gray-500 dark:text-slate-500'}`}
+                        onClick={() => onViewModeChange('markdown')}
+                        className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 px-3 ${viewMode === 'markdown' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                        title="Preview Mode"
                     >
-                        <Eye size={14} /> Preview
+                        <Eye size={16} />
+                        <span className="text-xs font-semibold">Preview</span>
                     </button>
                 </div>
 
@@ -382,37 +343,31 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                     }
                                 }}
                             />
-
                             <div className="flex items-center border-l border-gray-300 dark:border-slate-700 ml-1 pl-1 gap-0.5">
                                 <span className="text-[10px] text-gray-400 min-w-[3ch] text-center">{searchMatchesCount > 0 ? `${currentMatchIndex + 1}/${searchMatchesCount}` : '0'}</span>
-                                <button onClick={handlePrevMatch} className="hover:bg-gray-200 dark:hover:bg-slate-700 rounded p-0.5" title="Previous"><ChevronUp size={14} /></button>
-                                <button onClick={handleNextMatch} className="hover:bg-gray-200 dark:hover:bg-slate-700 rounded p-0.5" title="Next"><ChevronDown size={14} /></button>
+                                <button onClick={handlePrevMatch} className="hover:bg-gray-200 dark:hover:bg-slate-700 rounded p-0.5"><ChevronUp size={14} /></button>
+                                <button onClick={handleNextMatch} className="hover:bg-gray-200 dark:hover:bg-slate-700 rounded p-0.5"><ChevronDown size={14} /></button>
                             </div>
-
                             <div className="flex items-center border-l border-gray-300 dark:border-slate-700 ml-1 pl-1 gap-0.5">
                                 <button onClick={() => setSearchOptions(o => ({ ...o, caseSensitive: !o.caseSensitive }))} className={`p-0.5 rounded ${searchOptions.caseSensitive ? 'text-blue-600 bg-blue-100' : 'text-gray-400'}`} title="Case Sensitive"><CaseSensitive size={14} /></button>
                                 <button onClick={() => setSearchOptions(o => ({ ...o, wholeWord: !o.wholeWord }))} className={`p-0.5 rounded ${searchOptions.wholeWord ? 'text-blue-600 bg-blue-100' : 'text-gray-400'}`} title="Whole Word"><WholeWord size={14} /></button>
                             </div>
-
-                            <button onClick={toggleSearch} className="ml-1 text-gray-400 hover:text-red-500 p-0.5"><X size={14} /></button>
+                            <button onClick={toggleSearch} className="ml-1 p-0.5 text-gray-400 hover:text-red-500 rounded"><X size={14} /></button>
                         </div>
                     )}
                 </div>
             </header>
 
-            {/* Main Content Area */}
             <div className="flex-1 overflow-hidden relative group/editor flex">
-
-                {/* Line Numbers Gutter (Only in Source Mode) */}
                 {viewMode === 'raw' && settings.showLineNumbers && (
                     <div
                         ref={lineNumbersRef}
-                        className="flex-shrink-0 bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 pt-4 pb-4 text-right pr-3 select-none overflow-hidden"
+                        className="flex-shrink-0 bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 pt-4 pb-4 text-right pr-3 select-none overflow-hidden text-sm"
                         style={{
                             fontFamily: editorFontFamily,
                             fontSize: `${settings.fontSize}px`,
                             lineHeight: settings.lineHeight,
-                            width: `${Math.max(3, lineCount.toString().length) * settings.fontSize * 0.8}px` // Dynamic width based on digits
+                            width: `${Math.max(3, lineCount.toString().length) * settings.fontSize * 0.8}px`
                         }}
                     >
                         {Array.from({ length: lineCount }).map((_, i) => (
@@ -421,16 +376,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                     </div>
                 )}
 
-                {/* Editor / Viewer */}
                 <div className="flex-1 relative h-full min-w-0">
                     {viewMode === 'markdown' ? (
                         <div
                             ref={previewContainerRef}
                             className="h-full w-full overflow-y-auto custom-scrollbar prose dark:prose-invert max-w-none p-4 cursor-text"
-                            onDoubleClick={() => setViewMode('raw')}
-                            title="Double click to edit"
+                            onDoubleClick={() => onViewModeChange('raw')}
                             style={{
-                                fontFamily: settings.fontFamily === 'serif' ? 'serif' : 'sans-serif', // Markdown usually doesn't strictly follow mono unless code blocks
+                                fontFamily: settings.fontFamily === 'serif' ? 'serif' : 'sans-serif',
                                 fontSize: `${settings.fontSize}px`,
                                 lineHeight: settings.lineHeight,
                             }}
@@ -440,25 +393,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                             </ReactMarkdown>
                         </div>
                     ) : (
-                        /* RAW EDITABLE MODE WITH BACKDROP HIGHLIGHTS */
                         <div className="relative w-full h-full bg-white dark:bg-slate-950">
-                            {/* Backdrop for Highlights */}
                             {searchQuery && (
-                                <div
-                                    ref={backdropRef}
-                                    className="absolute inset-0 z-0 overflow-auto select-none pointer-events-none custom-scrollbar"
-                                    aria-hidden="true"
-                                >
-                                    <HighlightBackdrop
-                                        content={activeNote.content}
-                                        query={searchQuery}
-                                        options={searchOptions}
-                                        settings={settings}
-                                    />
+                                <div ref={backdropRef} className="absolute inset-0 z-0 overflow-auto select-none pointer-events-none custom-scrollbar" aria-hidden="true">
+                                    <HighlightBackdrop content={activeNote.content} query={searchQuery} options={searchOptions} settings={settings} />
                                 </div>
                             )}
-
-                            {/* Editable Textarea */}
                             <textarea
                                 ref={textareaRef}
                                 value={activeNote.content}
@@ -477,7 +417,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                     )}
                 </div>
             </div>
-
         </main>
     );
 };

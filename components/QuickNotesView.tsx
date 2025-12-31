@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Note, NoteType, Project } from '../types';
-import { Zap, Plus, X, Calendar, ArrowRight, CheckCircle2, Pencil, Eye, Search } from 'lucide-react';
+import { Note, NoteType } from '../types';
+import { Zap, Plus, X, Calendar, Pencil, Eye, Search, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
 
 interface QuickNotesViewProps {
     notes: Note[];
-    projects: Project[];
     onAddNote: (content: string, type: NoteType) => void;
     onUpdateNoteContent: (noteId: string, newContent: string) => void;
-    onMoveNote: (noteId: string, projectId: string) => void;
+    collapsedNoteIds: string[];
+    onToggleCollapse: (noteId: string) => void;
     highlightNoteId?: string;
     searchQuery?: string;
 }
@@ -48,16 +48,17 @@ const AutoResizeTextarea: React.FC<{
 
 export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
     notes,
-    projects,
     onAddNote,
     onUpdateNoteContent,
-    onMoveNote,
+    collapsedNoteIds,
+    onToggleCollapse,
     highlightNoteId,
     searchQuery
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [newContent, setNewContent] = useState('');
     const [previewNotes, setPreviewNotes] = useState<Set<string>>(new Set());
+    const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
 
     const handleSave = () => {
         if (newContent.trim()) {
@@ -72,6 +73,13 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
         if (newSet.has(noteId)) newSet.delete(noteId);
         else newSet.add(noteId);
         setPreviewNotes(newSet);
+    };
+
+    const handleCopy = (note: Note) => {
+        navigator.clipboard.writeText(note.content).then(() => {
+            setCopiedNoteId(note.id);
+            setTimeout(() => setCopiedNoteId(null), 2000);
+        });
     };
 
     // Scroll to highlight
@@ -164,76 +172,79 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                     </div>
                 )}
 
-                {notes.map(note => (
-                    <div
-                        key={note.id}
-                        ref={el => { noteRefs.current[note.id] = el; }}
-                        className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl p-0 shadow-sm hover:shadow-md transition-all duration-200 group overflow-hidden"
-                    >
-                        {/* Note Toolbar */}
-                        <div className="px-4 py-2 border-b border-gray-50 dark:border-slate-800 flex justify-between items-center bg-gray-50/30 dark:bg-slate-900/30">
-                            <div className="flex items-center text-[10px] font-medium text-gray-400 dark:text-slate-500 gap-2">
-                                <Calendar size={12} />
-                                <span>{format(note.createdAt, 'MMM d, HH:mm')}</span>
-                            </div>
+                {notes.map(note => {
+                    const isCollapsed = collapsedNoteIds.includes(note.id);
+                    return (
+                        <div
+                            key={note.id}
+                            ref={el => { noteRefs.current[note.id] = el; }}
+                            className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl p-0 shadow-sm hover:shadow-md transition-all duration-200 group overflow-hidden"
+                        >
+                            {/* Note Toolbar */}
+                            <div className="px-4 py-2 border-b border-gray-50 dark:border-slate-800 flex justify-between items-center bg-gray-50/30 dark:bg-slate-900/30">
+                                <div className="flex items-center text-[10px] font-medium text-gray-400 dark:text-slate-500 gap-2">
+                                    <Calendar size={12} />
+                                    <span>{format(note.createdAt, 'MMM d, HH:mm')}</span>
+                                </div>
 
-                            <div className="flex gap-1">
-                                <button
-                                    onClick={() => togglePreview(note.id)}
-                                    className={`p-1.5 rounded transition-colors ${previewNotes.has(note.id) ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
-                                    title={previewNotes.has(note.id) ? "Edit Mode" : "Markdown Preview Mode"}
-                                >
-                                    {previewNotes.has(note.id) ? <Pencil size={14} /> : <Eye size={14} />}
-                                </button>
-
-                                <div className="relative group/menu">
-                                    <button className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 rounded transition-colors">
-                                        Move
-                                        <ArrowRight size={10} />
+                                <div className="flex gap-1">
+                                    <button
+                                        onClick={() => onToggleCollapse(note.id)}
+                                        className="p-1.5 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                                        title={isCollapsed ? "Expand" : "Collapse"}
+                                    >
+                                        {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                                     </button>
-                                    <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-xl rounded-lg overflow-hidden hidden group-hover/menu:block z-20 animate-in fade-in slide-in-from-top-2 duration-150">
-                                        <div className="max-h-48 overflow-y-auto py-1">
-                                            {projects.map(p => (
-                                                <button
-                                                    key={p.id}
-                                                    onClick={() => onMoveNote(note.id, p.id)}
-                                                    className="w-full text-left px-4 py-2 text-xs text-gray-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 flex items-center justify-between group/item"
-                                                >
-                                                    <span className="truncate">{p.name}</span>
-                                                    <CheckCircle2 size={12} className="text-blue-500 opacity-0 group-hover/item:opacity-100" />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
+
+                                    <button
+                                        onClick={() => togglePreview(note.id)}
+                                        className={`p-1.5 rounded transition-colors ${previewNotes.has(note.id) ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                                        title={previewNotes.has(note.id) ? "Edit Mode" : "Markdown Preview Mode"}
+                                    >
+                                        {previewNotes.has(note.id) ? <Pencil size={14} /> : <Eye size={14} />}
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleCopy(note)}
+                                        className={`p-1.5 rounded transition-colors ${copiedNoteId === note.id ? 'text-green-600 bg-green-50 dark:bg-green-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                                        title="Copy to Clipboard"
+                                    >
+                                        {copiedNoteId === note.id ? <Check size={14} /> : <Copy size={14} />}
+                                    </button>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Note Content */}
-                        <div className="p-0">
-                            {previewNotes.has(note.id) ? (
-                                <div className="p-4 prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 min-h-[40px]">
-                                    <ReactMarkdown>{note.content}</ReactMarkdown>
+                            {/* Note Content */}
+                            <div className="p-0">
+                                {previewNotes.has(note.id) ? (
+                                    <div className={`p-4 prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 min-h-[40px] ${isCollapsed ? 'line-clamp-2' : ''}`}>
+                                        <ReactMarkdown>{note.content}</ReactMarkdown>
+                                    </div>
+                                ) : isCollapsed ? (
+                                    <div className="p-4 text-sm text-gray-800 dark:text-gray-200 leading-[1.6] line-clamp-2 break-all overflow-hidden"
+                                        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '3.2em' }}>
+                                        {note.content || <span className="opacity-50 italic text-[12px]">Empty note...</span>}
+                                    </div>
+                                ) : (
+                                    <AutoResizeTextarea
+                                        className="p-4 text-sm text-gray-800 dark:text-gray-200 leading-[1.6]"
+                                        value={note.content}
+                                        onChange={(newVal) => onUpdateNoteContent(note.id, newVal)}
+                                        placeholder="Empty note..."
+                                    />
+                                )}
+                            </div>
+
+                            {/* Floating message for search */}
+                            {!previewNotes.has(note.id) && !isCollapsed && searchQuery && note.content.toLowerCase().includes(searchQuery.toLowerCase()) && (
+                                <div className="px-4 pb-2 text-[10px] text-blue-500/50 flex items-center gap-1 italic">
+                                    <Search size={10} />
+                                    <span>Editing note (Matches found)</span>
                                 </div>
-                            ) : (
-                                <AutoResizeTextarea
-                                    className="p-4 text-sm text-gray-800 dark:text-gray-200 leading-relaxed"
-                                    value={note.content}
-                                    onChange={(newVal) => onUpdateNoteContent(note.id, newVal)}
-                                    placeholder="Empty note..."
-                                />
                             )}
                         </div>
-
-                        {/* Floating message for search if needed */}
-                        {!previewNotes.has(note.id) && searchQuery && note.content.toLowerCase().includes(searchQuery.toLowerCase()) && (
-                            <div className="px-4 pb-2 text-[10px] text-blue-500/50 flex items-center gap-1 italic">
-                                <Search size={10} />
-                                <span>Editing note (Matches found)</span>
-                            </div>
-                        )}
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

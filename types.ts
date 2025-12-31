@@ -1,4 +1,12 @@
 
+export interface UserHabits {
+  lastActiveProjectId: string | null;
+  lastActiveNoteId: string | null;
+  editorViewMode: 'raw' | 'markdown';
+  collapsedQuickNoteIds: string[];
+  expandedProjectIds: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -69,4 +77,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   highlightActiveLine: true,
   reduceMotion: false,
   autoBackup: false,
+};
+
+export const DEFAULT_USER_HABITS: UserHabits = {
+  lastActiveProjectId: 'quick_notes',
+  lastActiveNoteId: null,
+  editorViewMode: 'raw',
+  collapsedQuickNoteIds: [],
+  expandedProjectIds: [],
 };

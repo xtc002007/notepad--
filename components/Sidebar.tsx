@@ -19,6 +19,8 @@ interface SidebarProps {
     onNavigate: (type: 'project' | 'note', id: string, searchQuery?: string) => void;
     theme: Theme;
     onToggleTheme: () => void;
+    expandedProjectIds: string[];
+    onUpdateExpandedProjects: (ids: string[]) => void;
 }
 
 type SidebarTab = 'projects' | 'search' | 'outline';
@@ -38,12 +40,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onOpenSettings,
     onNavigate,
     theme,
-    onToggleTheme
+    onToggleTheme,
+    expandedProjectIds,
+    onUpdateExpandedProjects
 }) => {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [activeTab, setActiveTab] = useState<SidebarTab>('projects');
+    const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set(expandedProjectIds));
 
-    const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+    useEffect(() => {
+        setExpandedProjects(new Set(expandedProjectIds));
+    }, [expandedProjectIds]);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
@@ -91,6 +98,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
     }, [activeProjectId]);
 
+    // Auto-expand first project on launch
+    useEffect(() => {
+        if (projects.length > 0 && expandedProjectIds.length === 0) {
+            onUpdateExpandedProjects([projects[0].id]);
+        }
+    }, [projects, expandedProjectIds]);
+
     const toggleProjectExpand = (e: React.MouseEvent, projectId: string) => {
         e.stopPropagation();
         const newSet = new Set(expandedProjects);
@@ -99,7 +113,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         } else {
             newSet.add(projectId);
         }
-        setExpandedProjects(newSet);
+        onUpdateExpandedProjects(Array.from(newSet));
     };
 
     const handleTabChange = (tab: SidebarTab) => {
