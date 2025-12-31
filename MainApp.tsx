@@ -1,14 +1,14 @@
-
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { Project, Note, NoteType, Theme, AppSettings, DEFAULT_SETTINGS } from './types';
-// import { Loader2 } from 'lucide-react'; // Removed to optimize initial load
 import { storage } from './storage';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 // Lazy load components to improve startup performance
 const Sidebar = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.Sidebar })));
 const Workspace = React.lazy(() => import('./components/Workspace').then(m => ({ default: m.Workspace })));
 const QuickNotesView = React.lazy(() => import('./components/QuickNotesView').then(m => ({ default: m.QuickNotesView })));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
+const ConfirmDialog = React.lazy(() => import('./components/ConfirmDialog').then(m => ({ default: m.ConfirmDialog })));
 
 // Utility for ID generation since we don't have external libs
 const generateId = () => Math.random().toString(36).substring(2, 9);
@@ -32,6 +32,12 @@ const MainApp: React.FC = () => {
   const [highlightNoteId, setHighlightNoteId] = useState<string | undefined>(undefined);
   const [navigatedSearchQuery, setNavigatedSearchQuery] = useState<string>(''); // For passing search context
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // --- Data Loading ---
   useEffect(() => {
@@ -54,6 +60,37 @@ const MainApp: React.FC = () => {
     };
     loadData();
   }, []);
+
+  // --- Close Handler (Auto-Backup) ---
+  useEffect(() => {
+    let unlisten: any;
+    let isClosing = false;
+
+    const setupCloseListener = async () => {
+      const win = getCurrentWindow();
+      unlisten = await win.onCloseRequested(async (event) => {
+        if (isClosing) return; // Prevent recursion
+
+        if (settings.autoBackup && settings.backupPath) {
+          isClosing = true;
+          console.log('[MainApp] Program closing, performing backup...');
+          event.preventDefault(); // Pause closing
+          try {
+            await storage.triggerBackup();
+          } catch (e) {
+            console.error('Backup failed:', e);
+          }
+          await win.close(); // Trigger close again, will be caught by "if (isClosing) return"
+        }
+      });
+    };
+
+    setupCloseListener();
+
+    return () => {
+      if (unlisten && typeof unlisten === 'function') unlisten();
+    };
+  }, [settings]);
 
   // --- Settings Persistence & Application ---
   useEffect(() => {
@@ -116,15 +153,21 @@ const MainApp: React.FC = () => {
   };
 
   const handleDeleteProject = (projectId: string) => {
-    if (window.confirm('Are you sure you want to delete this project? All notes inside it will be deleted.')) {
-      setProjects(prev => prev.filter(p => p.id !== projectId));
-      setNotes(prev => prev.filter(n => n.projectId !== projectId));
-      if (activeProjectId === projectId) {
-        setActiveProjectId(QUICK_NOTES_VIEW_ID);
-        setActiveNoteId(null);
+    setConfirmState({
+      isOpen: true,
+      title: 'Delete Project',
+      message: 'Are you sure you want to delete this project? All notes inside it will be deleted permanently.',
+      onConfirm: () => {
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+        setNotes(prev => prev.filter(n => n.projectId !== projectId));
+        if (activeProjectId === projectId) {
+          setActiveProjectId(QUICK_NOTES_VIEW_ID);
+          setActiveNoteId(null);
+        }
+        storage.deleteProject(projectId);
+        setConfirmState(null);
       }
-      storage.deleteProject(projectId);
-    }
+    });
   };
 
   const handleAddNote = (content: string, type: NoteType, title?: string, specificProjectId?: string) => {
@@ -174,13 +217,19 @@ const MainApp: React.FC = () => {
   };
 
   const handleDeleteNote = (noteId: string) => {
-    if (window.confirm('Are you sure you want to delete this note?')) {
-      setNotes(prev => prev.filter(n => n.id !== noteId));
-      if (activeNoteId === noteId) {
-        setActiveNoteId(null);
+    setConfirmState({
+      isOpen: true,
+      title: 'Delete Note',
+      message: 'Are you sure you want to delete this note? This action cannot be undone.',
+      onConfirm: () => {
+        setNotes(prev => prev.filter(n => n.id !== noteId));
+        if (activeNoteId === noteId) {
+          setActiveNoteId(null);
+        }
+        storage.deleteNote(noteId);
+        setConfirmState(null);
       }
-      storage.deleteNote(noteId);
-    }
+    });
   };
 
   const handleMoveNote = (noteId: string, targetProjectId: string) => {
@@ -195,7 +244,18 @@ const MainApp: React.FC = () => {
   const handleNavigate = (type: 'project' | 'note', id: string, searchQuery?: string) => {
     if (type === 'project') {
       setActiveProjectId(id);
-      setActiveNoteId(null);
+
+      // Auto-open first note if available
+      const projectNotes = notes
+        .filter(n => n.projectId === id)
+        .sort((a, b) => b.createdAt - a.createdAt);
+
+      if (projectNotes.length > 0) {
+        setActiveNoteId(projectNotes[0].id);
+      } else {
+        setActiveNoteId(null);
+      }
+
       setHighlightNoteId(undefined);
       setNavigatedSearchQuery('');
     } else {
@@ -211,14 +271,20 @@ const MainApp: React.FC = () => {
   };
 
   const handleClearData = async () => {
-    if (confirm('Are you sure you want to delete all notes and projects? This cannot be undone.')) {
-      await storage.clearAllData();
-      setProjects([]);
-      setNotes([]);
-      setActiveProjectId(QUICK_NOTES_VIEW_ID);
-      setActiveNoteId(null);
-      setIsSettingsOpen(false);
-    }
+    setConfirmState({
+      isOpen: true,
+      title: 'Reset Application',
+      message: 'This will delete ALL your notes and projects. Are you ABSOLUTELY sure? This cannot be undone.',
+      onConfirm: async () => {
+        await storage.clearAllData();
+        setProjects([]);
+        setNotes([]);
+        setActiveProjectId(QUICK_NOTES_VIEW_ID);
+        setActiveNoteId(null);
+        setIsSettingsOpen(false);
+        setConfirmState(null);
+      }
+    });
   };
 
   const handleExportData = () => {
@@ -279,6 +345,7 @@ const MainApp: React.FC = () => {
           onRenameProject={handleRenameProject}
           onDeleteProject={handleDeleteProject}
           onAddNote={handleAddNote}
+          onRenameNote={handleRenameNote}
           onDeleteNote={handleDeleteNote}
           onNavigate={handleNavigate}
           onOpenSettings={() => setIsSettingsOpen(true)}
@@ -292,6 +359,7 @@ const MainApp: React.FC = () => {
               notes={activeNotes}
               projects={projects}
               onAddNote={handleAddNote}
+              onUpdateNoteContent={handleUpdateNoteContent}
               onMoveNote={handleMoveNote}
               highlightNoteId={highlightNoteId}
               searchQuery={navigatedSearchQuery}
@@ -320,6 +388,16 @@ const MainApp: React.FC = () => {
           onClearData={handleClearData}
           onExportData={handleExportData}
         />
+
+        {confirmState && (
+          <ConfirmDialog
+            isOpen={confirmState.isOpen}
+            title={confirmState.title}
+            message={confirmState.message}
+            onConfirm={confirmState.onConfirm}
+            onCancel={() => setConfirmState(null)}
+          />
+        )}
       </Suspense>
     </div>
   );

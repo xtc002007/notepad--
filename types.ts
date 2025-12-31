@@ -40,19 +40,23 @@ export type AppFont = 'sans' | 'serif' | 'mono';
 export interface AppSettings {
   // Appearance
   theme: Theme;
-  
+
   // Editor - Typography
   fontFamily: AppFont;
   fontSize: number; // px
   lineHeight: number; // unitless (e.g. 1.5)
-  
+
   // Editor - Behavior
   showLineNumbers: boolean;
   wordWrap: boolean;
   highlightActiveLine: boolean;
-  
+
   // General
   reduceMotion: boolean;
+
+  // Backup
+  backupPath?: string;
+  autoBackup: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -64,4 +68,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wordWrap: true,
   highlightActiveLine: true,
   reduceMotion: false,
+  autoBackup: false,
 };

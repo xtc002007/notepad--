@@ -17,10 +17,19 @@
         "fs:allow-write-file",
         "fs:allow-exists",
         "fs:allow-remove",
+        "dialog:default",
+        "core:window:allow-close",
+        "core:window:allow-destroy",
         {
             "identifier": "fs:scope",
             "allow": [
-                "$APPDATA/**"
+                "$APPDATA/**",
+                "$DESKTOP/**",
+                "$DOCUMENT/**",
+                "C:/**",
+                "D:/**",
+                "E:/**",
+                "F:/**"
             ]
         }
     ]
