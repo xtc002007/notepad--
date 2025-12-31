@@ -1,16 +1,31 @@
-# Run and deploy your AI Studio app
+# notepad--
 
-This contains everything you need to run your app locally.
+一个基于 Tauri 的现代记事本应用。
 
-View your app in AI Studio: https://ai.studio/apps/drive/1sKm_dUJviNVdk8ZkkXDsTzQ_1s7BQpmO
+## 特性
 
-## Run Locally
+- 跨平台支持（Windows、macOS、Linux）
+- 现代化界面
+- 轻量快速
 
-**Prerequisites:**  Node.js
+## 本地运行
 
+**前置要求：** Node.js
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. 安装依赖：
+   ```bash
+   npm install
+   ```
+
+2. 运行应用：
+   ```bash
+   npm run dev
+   ```
+
+## 开源协议
+
+本项目采用 MIT License 开源，详情见 [LICENSE](LICENSE) 文件。
+
+## 贡献
+
+欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解如何参与开发。
