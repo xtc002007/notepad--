@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Note, NoteType } from '../types';
-import { Zap, Plus, X, Calendar, Pencil, Eye, Search, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { Note, NoteType, SearchOptions } from '../types';
+import { Zap, Plus, X, Calendar, Pencil, Eye, Search, ChevronDown, ChevronRight, CaseSensitive, WholeWord, ChevronUp } from 'lucide-react';
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import TurndownService from 'turndown';
+import * as gfmPlugin from 'turndown-plugin-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface QuickNotesViewProps {
     notes: Note[];
@@ -14,35 +19,240 @@ interface QuickNotesViewProps {
     searchQuery?: string;
 }
 
+// --- Helper: Highlight logic ---
+const getHighlightParts = (content: string, query: string, options: SearchOptions) => {
+    if (!content) return [];
+    if (!query) return [{ text: content, isMatch: false }];
+    const { caseSensitive, wholeWord } = options;
+    const flags = caseSensitive ? 'g' : 'gi';
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = wholeWord ? `(\\b${escapedQuery}\\b)` : `(${escapedQuery})`;
+    const parts = content.split(new RegExp(pattern, flags));
+    return parts.map(part => {
+        let isMatch = false;
+        try { isMatch = new RegExp(`^${pattern}$`, flags).test(part); } catch { isMatch = false; }
+        return { text: part, isMatch };
+    });
+};
+
+const simpleMarkdownToHtml = (md: string) => {
+    return md
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        .replace(/^\s*[\-\*]\s+(.*$)/gim, '<ul><li>$1</li></ul>')
+        .replace(/^\s*\d+\.\s+(.*$)/gim, '<ol><li>$1</li></ol>')
+        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+        .replace(/\*(.*)\*/gim, '<em>$1</em>')
+        .replace(/__(.*)__/gim, '<strong>$1</strong>')
+        .replace(/_(.*)_/gim, '<em>$1</em>')
+        .replace(/`(.*?)`/gim, '<code>$1</code>')
+        .replace(/\n/g, '<br />')
+        .replace(/<\/ul>\s*<ul>/g, '')
+        .replace(/<\/ol>\s*<ol>/g, '');
+};
+
+const turndownService = new TurndownService({
+    headingStyle: 'atx',
+    hr: '---',
+    bulletListMarker: '-',
+});
+turndownService.use(gfmPlugin.gfm);
+
+// Rule 1: STRICT CODE HANDLING
+turndownService.addRule('code', {
+    filter: 'code',
+    replacement: (content, node) => {
+        if (node.parentNode && node.parentNode.nodeName === 'PRE') {
+            return content;
+        }
+        const trimmed = content.trim();
+        return trimmed ? '`' + trimmed + '`' : '';
+    }
+});
+
+// Rule 2: Code blocks
+turndownService.addRule('pre', {
+    filter: 'pre',
+    replacement: (content, node: any) => {
+        let lang = '';
+        const className = node.getAttribute('class') || '';
+        const codeChild = node.querySelector('code');
+        const codeClass = codeChild ? codeChild.getAttribute('class') || '' : '';
+        const langMatch = (className + ' ' + codeClass).match(/language-(\w+)/);
+        if (langMatch) lang = langMatch[1];
+        return '\n\n```' + lang + '\n' + content.trim() + '\n```\n\n';
+    }
+});
+
+// Rule 2b: IDE Paste Detection
+turndownService.addRule('idePaste', {
+    filter: (node) => {
+        const style = node.getAttribute('style') || '';
+        const className = node.getAttribute('class') || '';
+        const isCodeEditor = className.includes('monaco') || className.includes('vscode') || className.includes('ace_') || className.includes('hljs');
+        const isMonospace = style.includes('monospace') || style.includes('Courier') || style.includes('Consolas');
+        return (isCodeEditor || isMonospace) && (node.nodeName === 'DIV' || node.nodeName === 'PRE');
+    },
+    replacement: (content) => '\n\n```\n' + content.trim() + '\n```\n\n'
+});
+
+// Rule 3: Mark tags (keep content)
+turndownService.addRule('mark', {
+    filter: ['mark'],
+    replacement: (content) => content
+});
+
+// Rule 4: Transparent containers (inline only)
+turndownService.addRule('transparent', {
+    filter: ['span'],
+    replacement: (content) => content
+});
+
+// Rule 5: Clean paragraphs
+turndownService.addRule('paragraph', {
+    filter: 'p',
+    replacement: (content) => {
+        const trimmed = content.trim();
+        return trimmed ? `\n${trimmed}\n` : '';
+    }
+});
+
+const turndown = (html: string) => {
+    const cleanHtml = html
+        .replace(/\u00a0/g, ' ')
+        .replace(/&nbsp;/g, ' ');
+
+    let md = turndownService.turndown(cleanHtml);
+
+    md = md.split('\n')
+        .map(line => line.trimEnd())
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n');
+
+    return md.trim();
+};
+
+const HighlightElements: React.FC<{
+    children?: React.ReactNode;
+    query: string;
+    options: SearchOptions;
+}> = ({ children, query, options }) => {
+    if (!query) return <>{children}</>;
+
+    if (typeof children === 'string') {
+        const parts = getHighlightParts(children, query, options);
+        return (
+            <>
+                {parts.map((part, i) =>
+                    part.isMatch ?
+                        <mark key={i} className="bg-yellow-200 dark:bg-yellow-800/80 text-gray-900 dark:text-gray-100 rounded-[1px] px-0">{part.text}</mark> :
+                        part.text
+                )}
+            </>
+        );
+    }
+
+    if (Array.isArray(children)) {
+        return <>{children.map((child, i) => <HighlightElements key={i} query={query} options={options}>{child}</HighlightElements>)}</>;
+    }
+
+    return <>{children}</>;
+};
+
 const AutoResizeTextarea: React.FC<{
     value: string;
     onChange: (val: string) => void;
     placeholder?: string;
     className?: string;
-}> = ({ value, onChange, placeholder, className }) => {
+    searchQuery?: string;
+    searchOptions?: SearchOptions;
+}> = ({ value, onChange, placeholder, className, searchQuery, searchOptions }) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const backdropRef = useRef<HTMLDivElement>(null);
 
     const adjustHeight = () => {
         const textarea = textareaRef.current;
         if (textarea) {
             textarea.style.height = 'auto';
-            textarea.style.height = `${textarea.scrollHeight}px`;
+            const newHeight = `${textarea.scrollHeight}px`;
+            textarea.style.height = newHeight;
+            if (backdropRef.current) {
+                backdropRef.current.style.height = newHeight;
+            }
         }
     };
 
     useEffect(() => {
         adjustHeight();
-    }, [value]);
+    }, [value, searchQuery]);
+
+    const handleScroll = () => {
+        if (textareaRef.current && backdropRef.current) {
+            backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+        }
+    };
 
     return (
-        <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            className={`w-full resize-none overflow-hidden outline-none bg-transparent ${className}`}
-            rows={1}
-        />
+        <div className="relative w-full">
+            {searchQuery && searchOptions && (
+                <div
+                    ref={backdropRef}
+                    className={`absolute inset-0 pointer-events-none whitespace-pre-wrap overflow-hidden ${className}`}
+                    aria-hidden="true"
+                >
+                    <HighlightElements query={searchQuery} options={searchOptions}>
+                        {value}
+                    </HighlightElements>
+                </div>
+            )}
+            <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                onScroll={handleScroll}
+                onCopy={(e) => {
+                    const textarea = e.currentTarget;
+                    const start = textarea.selectionStart;
+                    const end = textarea.selectionEnd;
+                    const selectedText = textarea.value.substring(start, end);
+                    if (!selectedText) return;
+
+                    const html = simpleMarkdownToHtml(selectedText);
+                    e.clipboardData.setData('text/plain', selectedText);
+                    e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
+                    e.preventDefault();
+                }}
+                onPaste={(e) => {
+                    const html = e.clipboardData.getData('text/html');
+                    const hasRichContent = html && /<p|h\d|ul|ol|li|table|tr|td|blockquote|pre|code|strong|em/i.test(html);
+                    const hasCodeIndicators = html && /monospace|monaco|vscode|consolas|courier|hljs|ace_/i.test(html);
+
+                    if (html && (hasRichContent || hasCodeIndicators)) {
+                        e.preventDefault();
+                        const markdown = turndown(html);
+
+                        const textarea = e.currentTarget;
+                        const start = textarea.selectionStart;
+                        const end = textarea.selectionEnd;
+                        const val = textarea.value;
+
+                        const newVal = val.substring(0, start) + markdown + val.substring(end);
+                        onChange(newVal);
+
+                        setTimeout(() => {
+                            textarea.setSelectionRange(start + markdown.length, start + markdown.length);
+                        }, 0);
+                    }
+                }}
+                placeholder={placeholder}
+                className={`w-full resize-none overflow-hidden outline-none bg-transparent block relative z-10 ${className} ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white' : ''}`}
+                rows={1}
+            />
+        </div>
     );
 };
 
@@ -57,8 +267,46 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [newContent, setNewContent] = useState('');
+    const [isSearchVisible, setIsSearchVisible] = useState(false);
+    const [localSearchQuery, setLocalSearchQuery] = useState('');
+    const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
     const [previewNotes, setPreviewNotes] = useState<Set<string>>(new Set());
-    const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
+
+    // Sync with global search query when it changes
+    useEffect(() => {
+        if (searchQuery) {
+            setLocalSearchQuery(searchQuery);
+            setIsSearchVisible(true);
+        } else {
+            setIsSearchVisible(false);
+            setLocalSearchQuery('');
+        }
+    }, [searchQuery]);
+
+    const filteredNotes = React.useMemo(() => {
+        if (!localSearchQuery) return notes;
+
+        const { caseSensitive, wholeWord } = searchOptions;
+        const flags = caseSensitive ? 'g' : 'gi';
+        const escapedQuery = localSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = wholeWord ? `\\b${escapedQuery}\\b` : escapedQuery;
+
+        try {
+            const regex = new RegExp(pattern, flags);
+            return notes.filter(n => regex.test(n.content));
+        } catch {
+            return notes;
+        }
+    }, [notes, localSearchQuery, searchOptions]);
+
+    const toggleSearch = () => {
+        if (isSearchVisible) {
+            setIsSearchVisible(false);
+            setLocalSearchQuery('');
+        } else {
+            setIsSearchVisible(true);
+        }
+    };
 
     const handleSave = () => {
         if (newContent.trim()) {
@@ -75,22 +323,79 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
         setPreviewNotes(newSet);
     };
 
-    const handleCopy = (note: Note) => {
-        navigator.clipboard.writeText(note.content).then(() => {
-            setCopiedNoteId(note.id);
-            setTimeout(() => setCopiedNoteId(null), 2000);
-        });
-    };
+
+
+    const markdownComponents = React.useMemo(() => {
+        const Wrapper = ({ children }: any) => <HighlightElements query={localSearchQuery} options={searchOptions}>{children}</HighlightElements>;
+        return {
+            p: ({ children }: any) => <p className="mb-2"><Wrapper>{children}</Wrapper></p>,
+            li: ({ children }: any) => <li><Wrapper>{children}</Wrapper></li>,
+            h1: ({ children }: any) => <h1 className="text-xl font-bold mb-2"><Wrapper>{children}</Wrapper></h1>,
+            h2: ({ children }: any) => <h2 className="text-lg font-bold mb-2"><Wrapper>{children}</Wrapper></h2>,
+            h3: ({ children }: any) => <h3 className="text-base font-bold mb-1"><Wrapper>{children}</Wrapper></h3>,
+            strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
+            em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
+            code: (props: any) => {
+                const { inline, className, children } = props;
+                const match = /language-(\w+)/.exec(className || '');
+
+                if (!inline) {
+                    const content = String(children).replace(/\n$/, '');
+                    return (
+                        <div className="my-4 rounded-lg overflow-hidden text-sm bg-slate-900 border border-slate-800 shadow-lg group/code relative">
+                            {match && (
+                                <div className="bg-slate-800/80 px-4 py-1.5 flex justify-between items-center text-slate-400 text-[10px] font-mono border-b border-slate-700/50">
+                                    <span>{match[1].toUpperCase()}</span>
+                                </div>
+                            )}
+                            <SyntaxHighlighter
+                                style={vscDarkPlus}
+                                language={match ? match[1] : 'text'}
+                                PreTag="div"
+                                customStyle={{ margin: 0, padding: '1rem', background: 'transparent' }}
+                            >
+                                {content}
+                            </SyntaxHighlighter>
+                        </div>
+                    );
+                }
+
+                return (
+                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...props}>
+                        <Wrapper>{children}</Wrapper>
+                    </code>
+                );
+            },
+        };
+    }, [localSearchQuery, searchOptions]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                if (!isSearchVisible) {
+                    setIsSearchVisible(true);
+                } else {
+                    document.getElementById('quick-notes-search-input')?.focus();
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isSearchVisible]);
 
     // Scroll to highlight
     const noteRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
     useEffect(() => {
         if (highlightNoteId && noteRefs.current[highlightNoteId]) {
-            noteRefs.current[highlightNoteId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            noteRefs.current[highlightNoteId]?.classList.add('ring-2', 'ring-blue-400');
+            const el = noteRefs.current[highlightNoteId];
             setTimeout(() => {
-                noteRefs.current[highlightNoteId]?.classList.remove('ring-2', 'ring-blue-400');
-            }, 2000);
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el?.classList.add('ring-2', 'ring-blue-400', 'ring-offset-2');
+                setTimeout(() => {
+                    el?.classList.remove('ring-2', 'ring-blue-400', 'ring-offset-2');
+                }, 2000);
+            }, 100);
         }
     }, [highlightNoteId]);
 
@@ -116,11 +421,51 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                 <div className="flex items-center gap-2">
                     <button
                         onClick={() => setIsAdding(true)}
-                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow"
+                        className="p-2 rounded-md transition-all text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-slate-800"
                         title="Add Quick Note"
                     >
-                        <Plus size={14} /> New Note
+                        <Plus size={20} />
                     </button>
+                    <div className="flex items-center gap-1 border-l border-gray-100 dark:border-slate-800 pl-4 ml-2">
+                        {!isSearchVisible ? (
+                            <button onClick={toggleSearch} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-colors" title="Find in notes (Ctrl+F)">
+                                <Search size={18} />
+                            </button>
+                        ) : (
+                            <div className="flex items-center gap-0 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-md shadow-sm animate-in slide-in-from-right-2 fade-in overflow-hidden">
+                                <div className="pl-3 pr-1 flex items-center justify-center shrink-0">
+                                    <Search size={14} className="text-gray-400" />
+                                </div>
+                                <input
+                                    autoFocus
+                                    id="quick-notes-search-input"
+                                    type="text"
+                                    value={localSearchQuery}
+                                    onChange={(e) => { setLocalSearchQuery(e.target.value); }}
+                                    placeholder="Filter notes..."
+                                    className="bg-transparent border-none focus:ring-0 w-32 text-sm text-gray-800 dark:text-gray-200 py-1.5 px-2"
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Escape') {
+                                            toggleSearch();
+                                        }
+                                    }}
+                                />
+                                {localSearchQuery && (
+                                    <button onClick={() => setLocalSearchQuery('')} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                        <X size={14} />
+                                    </button>
+                                )}
+                                <div className="flex items-center border-l border-gray-300 dark:border-slate-700 pl-1 gap-0.5">
+                                    <span className="text-[10px] text-gray-400 min-w-[3ch] text-center">{localSearchQuery ? filteredNotes.length : 0}</span>
+                                </div>
+                                <div className="flex items-center border-l border-gray-300 dark:border-slate-700 pl-1 gap-0.5">
+                                    <button onClick={() => setSearchOptions(o => ({ ...o, caseSensitive: !o.caseSensitive }))} className={`p-0.5 rounded ${searchOptions.caseSensitive ? 'text-blue-600 bg-blue-100' : 'text-gray-400'}`} title="Case Sensitive"><CaseSensitive size={14} /></button>
+                                    <button onClick={() => setSearchOptions(o => ({ ...o, wholeWord: !o.wholeWord }))} className={`p-0.5 rounded ${searchOptions.wholeWord ? 'text-blue-600 bg-blue-100' : 'text-gray-400'}`} title="Whole Word"><WholeWord size={14} /></button>
+                                </div>
+                                <button onClick={toggleSearch} className="ml-1 p-0.5 text-gray-400 hover:text-red-500 rounded"><X size={14} /></button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </header>
 
@@ -172,7 +517,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                     </div>
                 )}
 
-                {notes.map(note => {
+                {filteredNotes.map(note => {
                     const isCollapsed = collapsedNoteIds.includes(note.id);
                     return (
                         <div
@@ -203,27 +548,42 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                                     >
                                         {previewNotes.has(note.id) ? <Pencil size={14} /> : <Eye size={14} />}
                                     </button>
-
-                                    <button
-                                        onClick={() => handleCopy(note)}
-                                        className={`p-1.5 rounded transition-colors ${copiedNoteId === note.id ? 'text-green-600 bg-green-50 dark:bg-green-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
-                                        title="Copy to Clipboard"
-                                    >
-                                        {copiedNoteId === note.id ? <Check size={14} /> : <Copy size={14} />}
-                                    </button>
                                 </div>
                             </div>
 
                             {/* Note Content */}
                             <div className="p-0">
                                 {previewNotes.has(note.id) ? (
-                                    <div className={`p-4 prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 min-h-[40px] ${isCollapsed ? 'line-clamp-2' : ''}`}>
-                                        <ReactMarkdown>{note.content}</ReactMarkdown>
+                                    <div
+                                        className={`p-4 prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 min-h-[40px] ${isCollapsed ? 'line-clamp-2' : ''}`}
+                                        onCopy={(e) => {
+                                            const selection = window.getSelection();
+                                            if (!selection || selection.rangeCount === 0) return;
+
+                                            const range = selection.getRangeAt(0);
+                                            const container = document.createElement('div');
+                                            container.appendChild(range.cloneContents());
+
+                                            const html = container.innerHTML;
+                                            const markdown = turndown(html);
+
+                                            e.clipboardData.setData('text/plain', markdown);
+                                            e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
+                                            e.preventDefault();
+                                        }}
+                                    >
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents as any}>{note.content}</ReactMarkdown>
                                     </div>
                                 ) : isCollapsed ? (
                                     <div className="p-4 text-sm text-gray-800 dark:text-gray-200 leading-[1.6] line-clamp-2 break-all overflow-hidden"
                                         style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '3.2em' }}>
-                                        {note.content || <span className="opacity-50 italic text-[12px]">Empty note...</span>}
+                                        {note.content ? (
+                                            <HighlightElements query={localSearchQuery} options={searchOptions}>
+                                                {note.content}
+                                            </HighlightElements>
+                                        ) : (
+                                            <span className="opacity-50 italic text-[12px]">Empty note...</span>
+                                        )}
                                     </div>
                                 ) : (
                                     <AutoResizeTextarea
@@ -231,12 +591,14 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                                         value={note.content}
                                         onChange={(newVal) => onUpdateNoteContent(note.id, newVal)}
                                         placeholder="Empty note..."
+                                        searchQuery={localSearchQuery}
+                                        searchOptions={searchOptions}
                                     />
                                 )}
                             </div>
 
                             {/* Floating message for search */}
-                            {!previewNotes.has(note.id) && !isCollapsed && searchQuery && note.content.toLowerCase().includes(searchQuery.toLowerCase()) && (
+                            {!previewNotes.has(note.id) && !isCollapsed && localSearchQuery && note.content.toLowerCase().includes(localSearchQuery.toLowerCase()) && (
                                 <div className="px-4 pb-2 text-[10px] text-blue-500/50 flex items-center gap-1 italic">
                                     <Search size={10} />
                                     <span>Editing note (Matches found)</span>

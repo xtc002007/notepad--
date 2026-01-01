@@ -299,6 +299,10 @@ const MainApp: React.FC = () => {
     }
   };
 
+  const handleClearSearch = () => {
+    setNavigatedSearchQuery('');
+  };
+
   const handleClearData = async () => {
     setConfirmState({
       isOpen: true,
@@ -377,6 +381,7 @@ const MainApp: React.FC = () => {
           onRenameNote={handleRenameNote}
           onDeleteNote={handleDeleteNote}
           onNavigate={handleNavigate}
+          onClearSearch={handleClearSearch}
           onOpenSettings={() => setIsSettingsOpen(true)}
           theme={settings.theme}
           onToggleTheme={toggleQuickTheme}

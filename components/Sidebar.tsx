@@ -17,6 +17,7 @@ interface SidebarProps {
     onDeleteNote: (id: string) => void;
     onOpenSettings: () => void;
     onNavigate: (type: 'project' | 'note', id: string, searchQuery?: string) => void;
+    onClearSearch: () => void;
     theme: Theme;
     onToggleTheme: () => void;
     expandedProjectIds: string[];
@@ -39,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onDeleteNote,
     onOpenSettings,
     onNavigate,
+    onClearSearch,
     theme,
     onToggleTheme,
     expandedProjectIds,
@@ -122,7 +124,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         // Clear search query if moving away from search
         if (tab !== 'search') {
-            // setSearchQuery(''); // Keep search state for now or clear based on preference
+            setSearchQuery('');
+            onClearSearch();
         }
 
         if (tab === 'search' && searchInputRef.current) {
@@ -538,17 +541,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                     {/* Search View */}
                     <div className={`absolute inset-0 flex flex-col transition-all duration-300 transform ${activeTab === 'search' ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'}`}>
-                        <div className="p-4 border-b border-gray-200 dark:border-slate-800">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-[11px] text-gray-400" size={14} />
-                                <input ref={searchInputRef} type="text" className="w-full pl-9 pr-8 py-2 text-sm bg-white dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Search everywhere..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                        <div className="p-4 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+                            <div className="flex items-center bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all group overflow-hidden">
+                                <div className="pl-3.5 pr-1 flex items-center justify-center shrink-0">
+                                    <Search className="text-gray-400 group-focus-within:text-blue-500 transition-colors" size={16} />
+                                </div>
+                                <input
+                                    ref={searchInputRef}
+                                    id="sidebar-search-input"
+                                    type="text"
+                                    className="w-full py-2.5 px-2 text-sm bg-transparent border-none focus:ring-0 focus:outline-none font-sans text-gray-800 dark:text-slate-200"
+                                    placeholder="Search everywhere..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                />
                             </div>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto p-2 custom-scrollbar bg-white dark:bg-slate-950">
                             {searchQuery && searchResults.notes.map(n => (
-                                <button key={n.id} onClick={() => onNavigate('note', n.id, searchQuery)} className="w-full text-left p-3 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg border-b border-gray-100 dark:border-slate-800/50 mb-1">
-                                    <div className="text-sm font-semibold text-gray-800 dark:text-slate-200 truncate mb-1">{n.title || 'Untitled'}</div>
-                                    <div className="text-xs text-gray-500 line-clamp-2">{n.snippet}</div>
+                                <button key={n.id} onClick={() => onNavigate('note', n.id, searchQuery)} className="w-full text-left p-3 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg border-b border-gray-100 dark:border-slate-800/50 mb-1 active:bg-blue-50 dark:active:bg-blue-900/10 transition-colors">
+                                    <div className="text-sm font-semibold text-gray-800 dark:text-slate-200 truncate mb-1">
+                                        <HighlightedText text={n.title || 'Untitled'} />
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                                        <HighlightedText text={n.snippet} />
+                                    </div>
                                 </button>
                             ))}
                         </div>
@@ -556,10 +573,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                     {/* Outline View */}
                     <div className={`absolute inset-0 flex flex-col transition-all duration-300 transform ${activeTab === 'outline' ? 'translate-x-0 opacity-100' : 'translate-x-[200%] opacity-0 pointer-events-none'}`}>
-                        <div className="px-4 py-4 border-b border-gray-200 dark:border-slate-800">
+                        <div className="px-4 py-4 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-950">
                             <span className="text-xs font-bold text-gray-500 dark:text-slate-500 uppercase tracking-tight">Outline</span>
                         </div>
-                        <div className="flex-1 overflow-y-auto py-4 px-2 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto py-4 px-2 custom-scrollbar bg-white dark:bg-slate-950">
                             {activeProjectId === 'quick_notes' ? (
                                 /* Quick Notes Snippets */
                                 <div className="space-y-1">
@@ -578,7 +595,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <div className="space-y-0.5">
                                     {outlineTree.map((h, i) => {
                                         // Skip if parent is collapsed
-                                        // Simplified logic: find last parent and check its collapse state
                                         let isHidden = false;
                                         for (let prevIdx = i - 1; prevIdx >= 0; prevIdx--) {
                                             if (outlineTree[prevIdx].relLevel < h.relLevel) {
@@ -601,14 +617,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 className="group/outline relative flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800/50 transition-colors"
                                                 style={{ paddingLeft: `${h.relLevel * 16 + 8}px` }}
                                             >
-                                                {hasChildren ? (
+                                                {hasChildren && (
                                                     <button
                                                         onClick={(e) => toggleOutlineCollapse(e, i)}
-                                                        className="p-0.5 -ml-4 text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
+                                                        className="p-1 -ml-6 text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
                                                     >
                                                         {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                                                     </button>
-                                                ) : null}
+                                                )}
                                                 <span className={`text-[13px] truncate ${h.relLevel === 0 ? 'font-semibold text-gray-800 dark:text-gray-200' : h.relLevel === 1 ? 'font-medium text-gray-700 dark:text-gray-300' : 'text-gray-600 dark:text-gray-400'}`}>
                                                     {h.text}
                                                 </span>
@@ -616,7 +632,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         );
                                     })}
                                     {outlineTree.length === 0 && (
-                                        <div className="px-4 py-10 text-center text-xs text-gray-400 italic">No headings found</div>
+                                        <div className="text-center py-10 px-4 text-xs text-gray-400 italic font-sans uppercase tracking-widest opacity-50">No Outline</div>
                                     )}
                                 </div>
                             )}

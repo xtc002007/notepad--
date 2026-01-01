@@ -1,7 +1,10 @@
-
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import TurndownService from 'turndown';
+import * as gfmPlugin from 'turndown-plugin-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Project, Note, NoteType, SearchOptions, AppSettings } from '../types';
 import { File as FileIcon, Search, CaseSensitive, WholeWord, X, ChevronDown, ChevronUp, FileText, Code, Eye, Pencil } from 'lucide-react';
 
@@ -36,6 +39,115 @@ const getHighlightParts = (content: string, query: string, options: SearchOption
     });
 };
 
+// --- Helper: Simple Markdown to HTML for clipboard ---
+const simpleMarkdownToHtml = (md: string) => {
+    return md
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        .replace(/^\s*[\-\*]\s+(.*$)/gim, '<ul><li>$1</li></ul>')
+        .replace(/^\s*\d+\.\s+(.*$)/gim, '<ol><li>$1</li></ol>')
+        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+        .replace(/\*(.*)\*/gim, '<em>$1</em>')
+        .replace(/__(.*)__/gim, '<strong>$1</strong>')
+        .replace(/_(.*)_/gim, '<em>$1</em>')
+        .replace(/`(.*?)`/gim, '<code>$1</code>')
+        .replace(/\n/g, '<br />')
+        .replace(/<\/ul>\s*<ul>/g, '') // Merge lists
+        .replace(/<\/ol>\s*<ol>/g, '');
+};
+
+const turndownService = new TurndownService({
+    headingStyle: 'atx',
+    hr: '---',
+    bulletListMarker: '-',
+});
+turndownService.use(gfmPlugin.gfm);
+
+// Rule 1: STRICT CODE HANDLING
+// This rule catches ALL <code> tags. 
+// - If inside <pre>, return raw content so <pre> rule can wrap it in a block.
+// - Otherwise, force it to be inline with single backticks.
+turndownService.addRule('code', {
+    filter: 'code',
+    replacement: (content, node) => {
+        if (node.parentNode && node.parentNode.nodeName === 'PRE') {
+            return content;
+        }
+        const trimmed = content.trim();
+        return trimmed ? '`' + trimmed + '`' : '';
+    }
+});
+
+// Rule 2: Code blocks
+turndownService.addRule('pre', {
+    filter: 'pre',
+    replacement: (content, node: any) => {
+        let lang = '';
+        const className = node.getAttribute('class') || '';
+        const codeChild = node.querySelector('code');
+        const codeClass = codeChild ? codeChild.getAttribute('class') || '' : '';
+        const langMatch = (className + ' ' + codeClass).match(/language-(\w+)/);
+        if (langMatch) lang = langMatch[1];
+        return '\n\n```' + lang + '\n' + content.trim() + '\n```\n\n';
+    }
+});
+
+// Rule 2b: IDE Paste Detection (Detecting nested code structures)
+turndownService.addRule('idePaste', {
+    filter: (node) => {
+        const style = node.getAttribute('style') || '';
+        const className = node.getAttribute('class') || '';
+        // Look for common code editor signals
+        const isCodeEditor = className.includes('monaco') || className.includes('vscode') || className.includes('ace_') || className.includes('hljs');
+        const isMonospace = style.includes('monospace') || style.includes('Courier') || style.includes('Consolas');
+        return (isCodeEditor || isMonospace) && (node.nodeName === 'DIV' || node.nodeName === 'PRE');
+    },
+    replacement: (content) => '\n\n```\n' + content.trim() + '\n```\n\n'
+});
+
+// Rule 3: Mark tags (keep content)
+turndownService.addRule('mark', {
+    filter: ['mark'],
+    replacement: (content) => content
+});
+
+// Rule 4: Transparent containers (inline only)
+turndownService.addRule('transparent', {
+    filter: ['span'],
+    replacement: (content) => content
+});
+
+// Rule 5: Clean paragraphs
+turndownService.addRule('paragraph', {
+    filter: 'p',
+    replacement: (content) => {
+        const trimmed = content.trim();
+        return trimmed ? `\n${trimmed}\n` : '';
+    }
+});
+
+const turndown = (html: string) => {
+    // 1. Replace NBSP with normal spaces and clean HTML entities
+    const cleanHtml = html
+        .replace(/\u00a0/g, ' ')
+        .replace(/&nbsp;/g, ' ');
+
+    // 2. Process with turndown
+    let md = turndownService.turndown(cleanHtml);
+
+    // 3. Post-process: collapse excessive newlines and trim each line
+    md = md.split('\n')
+        .map(line => line.trimEnd())
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n');
+
+    return md.trim();
+};
+
 // --- Component: Highlight Backdrop for Source Mode ---
 const HighlightBackdrop: React.FC<{
     content: string;
@@ -62,9 +174,9 @@ const HighlightBackdrop: React.FC<{
                 if (part.isMatch) {
                     const id = `match-${matchCounter}`;
                     matchCounter++;
-                    return <mark id={id} key={i} className="bg-yellow-300/60 dark:bg-yellow-600/60 text-transparent rounded-[1px]">{part.text}</mark>;
+                    return <mark id={id} key={i} className="bg-yellow-300/60 dark:bg-yellow-600/60 text-gray-900 dark:text-gray-100 rounded-[1px]">{part.text}</mark>;
                 }
-                return <span key={i} className="text-transparent">{part.text}</span>;
+                return <span key={i} className="text-gray-900 dark:text-gray-200">{part.text}</span>;
             })}
             <span className="invisible">.</span>
         </div>
@@ -132,6 +244,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             setSearchQuery(initialSearchQuery);
             setIsSearchVisible(true);
             onViewModeChange('raw');
+            // Give time for text rendering before scrolling
+            setTimeout(() => scrollToMatch(0), 100);
+        } else {
+            setIsSearchVisible(false);
+            setSearchQuery('');
         }
     }, [initialSearchQuery, activeNoteId, onViewModeChange]);
 
@@ -168,6 +285,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         }
         setCurrentMatchIndex(index);
     };
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                if (!isSearchVisible) {
+                    setIsSearchVisible(true);
+                } else {
+                    document.getElementById('workspace-search-input')?.focus();
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isSearchVisible]);
 
     useEffect(() => {
         const handleJump = (e: any) => {
@@ -226,6 +358,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         }
     };
 
+
+
     const lineCount = useMemo(() => {
         if (!activeNote || !activeNote.content) return 1;
         return activeNote.content.split('\n').length;
@@ -245,7 +379,38 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             blockquote: ({ children }: any) => <blockquote className="border-l-4 border-gray-200 dark:border-slate-800 pl-4 italic"><Wrapper>{children}</Wrapper></blockquote>,
             strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
             em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
-            code: ({ children, className }: any) => <code className={className}><Wrapper>{children}</Wrapper></code>,
+            code: (props: any) => {
+                const { inline, className, children } = props;
+                const match = /language-(\w+)/.exec(className || '');
+
+                if (!inline) {
+                    const content = String(children).replace(/\n$/, '');
+                    return (
+                        <div className="my-6 rounded-lg overflow-hidden text-sm bg-slate-900 border border-slate-800 shadow-xl group/code relative">
+                            {match && (
+                                <div className="bg-slate-800/80 px-4 py-1.5 flex justify-between items-center text-slate-400 text-[11px] font-mono border-b border-slate-700/50">
+                                    <span>{match[1].toUpperCase()}</span>
+                                </div>
+                            )}
+                            <SyntaxHighlighter
+                                style={vscDarkPlus}
+                                language={match ? match[1] : 'text'}
+                                PreTag="div"
+                                customStyle={{ margin: 0, padding: '1.25rem', background: 'transparent' }}
+                                showLineNumbers={content.split('\n').length > 5}
+                            >
+                                {content}
+                            </SyntaxHighlighter>
+                        </div>
+                    );
+                }
+
+                return (
+                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...props}>
+                        <Wrapper>{children}</Wrapper>
+                    </code>
+                );
+            },
             a: ({ children, href }: any) => <a href={href} className="text-blue-600 hover:underline"><Wrapper>{children}</Wrapper></a>,
             del: ({ children }: any) => <del><Wrapper>{children}</Wrapper></del>,
             td: ({ children }: any) => <td className="border border-gray-200 dark:border-slate-800 px-4 py-2"><Wrapper>{children}</Wrapper></td>,
@@ -325,15 +490,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                             <Search size={18} />
                         </button>
                     ) : (
-                        <div className="flex items-center gap-1 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-md px-2 py-1 shadow-sm animate-in slide-in-from-right-2 fade-in">
-                            <Search size={14} className="text-gray-400" />
+                        <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-md shadow-sm animate-in slide-in-from-right-2 fade-in overflow-hidden">
+                            <div className="pl-3 pr-1 flex items-center justify-center shrink-0">
+                                <Search size={14} className="text-gray-400" />
+                            </div>
                             <input
                                 autoFocus
+                                id="workspace-search-input"
                                 type="text"
                                 value={searchQuery}
                                 onChange={(e) => { setSearchQuery(e.target.value); setCurrentMatchIndex(0); }}
                                 placeholder="Find..."
-                                className="bg-transparent border-none focus:ring-0 w-32 text-sm text-gray-800 dark:text-gray-200 p-0"
+                                className="bg-transparent border-none focus:ring-0 w-32 text-sm text-gray-800 dark:text-gray-200 py-1.5 px-2"
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
                                         e.preventDefault();
@@ -382,6 +550,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                             ref={previewContainerRef}
                             className="h-full w-full overflow-y-auto custom-scrollbar prose dark:prose-invert max-w-none p-4 cursor-text"
                             onDoubleClick={() => onViewModeChange('raw')}
+                            onCopy={(e) => {
+                                const selection = window.getSelection();
+                                if (!selection || selection.rangeCount === 0) return;
+
+                                const range = selection.getRangeAt(0);
+                                const container = document.createElement('div');
+                                container.appendChild(range.cloneContents());
+
+                                const html = container.innerHTML;
+                                const markdown = turndown(html);
+
+                                e.clipboardData.setData('text/plain', markdown);
+                                e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
+                                e.preventDefault();
+                            }}
                             style={{
                                 fontFamily: settings.fontFamily === 'serif' ? 'serif' : 'sans-serif',
                                 fontSize: `${settings.fontSize}px`,
@@ -404,6 +587,41 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                 value={activeNote.content}
                                 onChange={(e) => onUpdateNoteContent(activeNote.id, e.target.value)}
                                 onScroll={handleScroll}
+                                onCopy={(e) => {
+                                    const textarea = e.currentTarget;
+                                    const start = textarea.selectionStart;
+                                    const end = textarea.selectionEnd;
+                                    const selectedText = textarea.value.substring(start, end);
+                                    if (!selectedText) return;
+
+                                    const html = simpleMarkdownToHtml(selectedText);
+                                    e.clipboardData.setData('text/plain', selectedText);
+                                    e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
+                                    e.preventDefault();
+                                }}
+                                onPaste={(e) => {
+                                    const html = e.clipboardData.getData('text/html');
+                                    // Significantly broaden the detection:
+                                    const hasRichContent = html && /<p|h\d|ul|ol|li|table|tr|td|blockquote|pre|code|strong|em/i.test(html);
+                                    const hasCodeIndicators = html && /monospace|monaco|vscode|consolas|courier|hljs|ace_/i.test(html);
+
+                                    if (html && (hasRichContent || hasCodeIndicators)) {
+                                        e.preventDefault();
+                                        const markdown = turndown(html);
+                                        const textarea = e.currentTarget;
+                                        const start = textarea.selectionStart;
+                                        const end = textarea.selectionEnd;
+                                        const val = textarea.value;
+                                        const newVal = val.substring(0, start) + markdown + val.substring(end);
+                                        onUpdateNoteContent(activeNote.id, newVal);
+                                        setTimeout(() => {
+                                            if (textareaRef.current) {
+                                                const newCursorPos = start + markdown.length;
+                                                textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+                                            }
+                                        }, 0);
+                                    }
+                                }}
                                 spellCheck={false}
                                 className={`absolute inset-0 z-10 w-full h-full p-4 overflow-auto bg-transparent resize-none outline-none custom-scrollbar ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white selection:bg-blue-200/50 dark:selection:bg-blue-800/50' : 'text-gray-900 dark:text-gray-200'} ${settings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'} ${settings.highlightActiveLine ? 'focus:ring-2 ring-inset ring-blue-500/10' : ''}`}
                                 placeholder="Start typing..."
