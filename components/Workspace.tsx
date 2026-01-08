@@ -7,6 +7,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Project, Note, NoteType, SearchOptions, AppSettings } from '../types';
 import { File as FileIcon, Search, CaseSensitive, WholeWord, X, ChevronDown, ChevronUp, FileText, Code, Eye, Pencil } from 'lucide-react';
+import { ContextMenu } from './ContextMenu';
+
 
 interface WorkspaceProps {
     project: Project | null;
@@ -229,6 +231,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     const [searchQuery, setSearchQuery] = useState('');
     const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
+
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -358,6 +362,64 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         }
     };
 
+    const handleContextMenu = (e: React.MouseEvent) => {
+        const selection = window.getSelection();
+        const hasSelection = (selection && selection.toString().length > 0) ||
+            (textareaRef.current && textareaRef.current.selectionStart !== textareaRef.current.selectionEnd);
+
+        if (hasSelection) {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY });
+        }
+    };
+
+    const handleCopySelection = () => {
+        if (viewMode === 'markdown') {
+            const selection = window.getSelection();
+            if (!selection || selection.rangeCount === 0) return;
+
+            const range = selection.getRangeAt(0);
+            const container = document.createElement('div');
+            container.appendChild(range.cloneContents());
+
+            const html = container.innerHTML;
+            const markdown = turndown(html);
+
+            const clipboardData = new DataTransfer();
+            clipboardData.setData('text/plain', markdown);
+            clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
+
+            // Use modern clipboard API or fallback
+            navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/plain': new Blob([markdown], { type: 'text/plain' }),
+                    'text/html': new Blob([`<div style="font-family: sans-serif;">${html}</div>`], { type: 'text/html' })
+                })
+            ]).catch(() => {
+                // Fallback for some browsers
+                navigator.clipboard.writeText(markdown);
+            });
+        } else {
+            const textarea = textareaRef.current;
+            if (!textarea) return;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const selectedText = textarea.value.substring(start, end);
+            if (!selectedText) return;
+
+            const html = simpleMarkdownToHtml(selectedText);
+
+            navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/plain': new Blob([selectedText], { type: 'text/plain' }),
+                    'text/html': new Blob([`<div style="font-family: sans-serif;">${html}</div>`], { type: 'text/html' })
+                })
+            ]).catch(() => {
+                navigator.clipboard.writeText(selectedText);
+            });
+        }
+    };
+
 
 
     const lineCount = useMemo(() => {
@@ -380,18 +442,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
             em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
             code: (props: any) => {
-                const { inline, className, children } = props;
+                const { className, children, ...rest } = props;
                 const match = /language-(\w+)/.exec(className || '');
+                const content = String(children).replace(/\n$/, '');
+                const isBlock = match || String(children).includes('\n');
 
-                if (!inline) {
-                    const content = String(children).replace(/\n$/, '');
+                if (isBlock) {
                     return (
                         <div className="my-6 rounded-lg overflow-hidden text-sm bg-slate-900 border border-slate-800 shadow-xl group/code relative">
-                            {match && (
-                                <div className="bg-slate-800/80 px-4 py-1.5 flex justify-between items-center text-slate-400 text-[11px] font-mono border-b border-slate-700/50">
-                                    <span>{match[1].toUpperCase()}</span>
-                                </div>
-                            )}
+                            <div className="bg-slate-800/80 px-4 py-1.5 flex justify-between items-center text-slate-400 text-[11px] font-mono border-b border-slate-700/50">
+                                <span>{match ? match[1].toUpperCase() : 'CODE'}</span>
+                            </div>
                             <SyntaxHighlighter
                                 style={vscDarkPlus}
                                 language={match ? match[1] : 'text'}
@@ -406,7 +467,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                 }
 
                 return (
-                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...props}>
+                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...rest}>
                         <Wrapper>{children}</Wrapper>
                     </code>
                 );
@@ -570,7 +631,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                 fontSize: `${settings.fontSize}px`,
                                 lineHeight: settings.lineHeight,
                             }}
+                            onContextMenu={handleContextMenu}
                         >
+
                             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                                 {activeNote.content}
                             </ReactMarkdown>
@@ -630,11 +693,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                     fontSize: `${settings.fontSize}px`,
                                     lineHeight: settings.lineHeight,
                                 }}
+                                onContextMenu={handleContextMenu}
                             />
                         </div>
                     )}
                 </div>
             </div>
+
+            {contextMenu && (
+                <ContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    onCopy={handleCopySelection}
+                    onClose={() => setContextMenu(null)}
+                />
+            )}
         </main>
+
     );
 };

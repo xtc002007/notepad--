@@ -76,9 +76,15 @@ export class SqliteStorageService implements StorageService {
         type TEXT NOT NULL,
         content TEXT NOT NULL,
         title TEXT,
-        createdAt INTEGER NOT NULL
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER,
+        isPinned INTEGER
       );
     `);
+
+            // Migration: Attempt to add columns if they don't exist (for existing DBs)
+            try { await this.db.execute('ALTER TABLE notes ADD COLUMN updatedAt INTEGER'); } catch (e) { /* ignore if exists */ }
+            try { await this.db.execute('ALTER TABLE notes ADD COLUMN isPinned INTEGER'); } catch (e) { /* ignore if exists */ }
 
             await this.db.execute(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -128,14 +134,17 @@ export class SqliteStorageService implements StorageService {
     async getNotes(): Promise<Note[]> {
         if (!this.db) await this.init();
         const notes = await this.db!.select<Note[]>('SELECT * FROM notes ORDER BY createdAt DESC');
-        return notes;
+        return notes.map(n => ({
+            ...n,
+            isPinned: !!n.isPinned // Ensure boolean type
+        }));
     }
 
     async saveNote(n: Note): Promise<void> {
         if (!this.db) await this.init();
         await this.db!.execute(
-            'INSERT OR REPLACE INTO notes (id, projectId, type, content, title, createdAt) VALUES ($1, $2, $3, $4, $5, $6)',
-            [n.id, n.projectId, n.type, n.content, n.title, n.createdAt]
+            'INSERT OR REPLACE INTO notes (id, projectId, type, content, title, createdAt, updatedAt, isPinned) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [n.id, n.projectId, n.type, n.content, n.title, n.createdAt, n.updatedAt || null, n.isPinned ? 1 : 0]
         );
     }
 

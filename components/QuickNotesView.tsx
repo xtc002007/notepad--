@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Note, NoteType, SearchOptions } from '../types';
-import { Zap, Plus, X, Calendar, Pencil, Eye, Search, ChevronDown, ChevronRight, CaseSensitive, WholeWord, ChevronUp } from 'lucide-react';
+import { Zap, Plus, X, Calendar, Pencil, Eye, Search, ChevronDown, ChevronRight, CaseSensitive, WholeWord, ChevronUp, Copy, Check, Pin } from 'lucide-react';
+import { ContextMenu } from './ContextMenu';
 import { format } from 'date-fns';
+
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import TurndownService from 'turndown';
@@ -17,6 +19,8 @@ interface QuickNotesViewProps {
     onToggleCollapse: (noteId: string) => void;
     highlightNoteId?: string;
     searchQuery?: string;
+    onTouchNote?: (noteId: string) => void;
+    onTogglePin?: (noteId: string) => void;
 }
 
 // --- Helper: Highlight logic ---
@@ -170,13 +174,23 @@ const AutoResizeTextarea: React.FC<{
     className?: string;
     searchQuery?: string;
     searchOptions?: SearchOptions;
-}> = ({ value, onChange, placeholder, className, searchQuery, searchOptions }) => {
+    onContextMenu?: (e: React.MouseEvent) => void;
+    onCopy?: () => void;
+    onBlur?: () => void;
+    isCollapsed?: boolean;
+}> = ({ value, onChange, placeholder, className, searchQuery, searchOptions, onContextMenu, onCopy, onBlur, isCollapsed }) => {
+
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
 
     const adjustHeight = () => {
         const textarea = textareaRef.current;
         if (textarea) {
+            if (isCollapsed) {
+                textarea.style.height = '';
+                if (backdropRef.current) backdropRef.current.style.height = '';
+                return;
+            }
             textarea.style.height = 'auto';
             const newHeight = `${textarea.scrollHeight}px`;
             textarea.style.height = newHeight;
@@ -188,7 +202,7 @@ const AutoResizeTextarea: React.FC<{
 
     useEffect(() => {
         adjustHeight();
-    }, [value, searchQuery]);
+    }, [value, searchQuery, isCollapsed]);
 
     const handleScroll = () => {
         if (textareaRef.current && backdropRef.current) {
@@ -221,10 +235,25 @@ const AutoResizeTextarea: React.FC<{
                     const selectedText = textarea.value.substring(start, end);
                     if (!selectedText) return;
 
+                    // Note: noteId is not available here directly in AutoResizeTextarea props. 
+                    // But we can pass it if we want strict event handling or rely on parent.
+                    // However, we are inside QuickNotesView where we map notes.
+                    // IMPORTANT: AutoResizeTextarea needs to know the noteId to callback? 
+                    // No, we can just let the parent handle it if we pass a callback to AutoResizeTextarea.
+                    // But AutoResizeTextarea is a generic component. 
+                    // Let's modify AutoResizeTextarea to accept onCopy cb or handle it in parent.
+                    // Actually, simpler: The parent (QuickNotesView) renders this.
+                    // But onCopy is on the textarea element.
+
+                    // Let's use the onContextMenu approach but for onCopy?
+                    // No, onCopy event bubbles? Yes.
+                    // We can handle onCopy on the parent div?
+
                     const html = simpleMarkdownToHtml(selectedText);
                     e.clipboardData.setData('text/plain', selectedText);
                     e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
                     e.preventDefault();
+                    if (onCopy) onCopy();
                 }}
                 onPaste={(e) => {
                     const html = e.clipboardData.getData('text/html');
@@ -249,8 +278,11 @@ const AutoResizeTextarea: React.FC<{
                     }
                 }}
                 placeholder={placeholder}
-                className={`w-full resize-none overflow-hidden outline-none bg-transparent block relative z-10 ${className} ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white' : ''}`}
-                rows={1}
+                onContextMenu={onContextMenu}
+                onBlur={onBlur}
+                className={`w-full resize-none overflow-hidden outline-none bg-transparent block relative z-10 ${className} ${searchQuery ? 'text-transparent caret-gray-900 dark:caret-white' : ''} ${isCollapsed ? 'line-clamp-2 max-h-[3.2em]' : ''}`}
+
+                rows={isCollapsed ? 2 : 1}
             />
         </div>
     );
@@ -263,14 +295,18 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
     collapsedNoteIds,
     onToggleCollapse,
     highlightNoteId,
-    searchQuery
+    searchQuery,
+    onTouchNote,
+    onTogglePin
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [newContent, setNewContent] = useState('');
     const [isSearchVisible, setIsSearchVisible] = useState(false);
     const [localSearchQuery, setLocalSearchQuery] = useState('');
     const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
-    const [previewNotes, setPreviewNotes] = useState<Set<string>>(new Set());
+    const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, isPreview: boolean, noteId?: string } | null>(null);
+
 
     // Sync with global search query when it changes
     useEffect(() => {
@@ -316,11 +352,51 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
         }
     };
 
-    const togglePreview = (noteId: string) => {
-        const newSet = new Set(previewNotes);
-        if (newSet.has(noteId)) newSet.delete(noteId);
-        else newSet.add(noteId);
-        setPreviewNotes(newSet);
+
+
+    const handleCopyNote = (note: Note) => {
+        navigator.clipboard.writeText(note.content).then(() => {
+            setCopiedNoteId(note.id);
+            setTimeout(() => setCopiedNoteId(null), 2000);
+            onTouchNote?.(note.id);
+        });
+    };
+
+    const handleContextMenu = (e: React.MouseEvent, isPreview: boolean, noteId?: string) => {
+        const selection = window.getSelection();
+        const hasSelection = (selection && selection.toString().length > 0);
+
+        // Note: For textarea we can't easily check selection here without a ref, 
+        // but the ContextMenu will only appear if we call e.preventDefault().
+        // For QuickNotes, we can just allow it and the user can copy if they selected something.
+
+        if (hasSelection || !isPreview) {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY, isPreview, noteId });
+        }
+    };
+
+    const handleCopySelection = () => {
+        if (!contextMenu) return;
+
+        // For textarea in QuickNotes, it's a bit trickier because we have multiple.
+        // But we can just use window.getSelection().toString() if it's there,
+        // or if it's a textarea, it might not show up in window.getSelection().
+
+        const selection = window.getSelection();
+        const text = selection?.toString();
+        if (text) {
+            if (contextMenu.noteId) onTouchNote?.(contextMenu.noteId);
+            const html = simpleMarkdownToHtml(text);
+            navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/plain': new Blob([text], { type: 'text/plain' }),
+                    'text/html': new Blob([`<div style="font-family: sans-serif;">${html}</div>`], { type: 'text/html' })
+                })
+            ]).catch(() => {
+                navigator.clipboard.writeText(text);
+            });
+        }
     };
 
 
@@ -336,18 +412,17 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
             strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
             em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
             code: (props: any) => {
-                const { inline, className, children } = props;
+                const { className, children, ...rest } = props;
                 const match = /language-(\w+)/.exec(className || '');
+                const content = String(children).replace(/\n$/, '');
+                const isBlock = match || String(children).includes('\n');
 
-                if (!inline) {
-                    const content = String(children).replace(/\n$/, '');
+                if (isBlock) {
                     return (
                         <div className="my-4 rounded-lg overflow-hidden text-sm bg-slate-900 border border-slate-800 shadow-lg group/code relative">
-                            {match && (
-                                <div className="bg-slate-800/80 px-4 py-1.5 flex justify-between items-center text-slate-400 text-[10px] font-mono border-b border-slate-700/50">
-                                    <span>{match[1].toUpperCase()}</span>
-                                </div>
-                            )}
+                            <div className="bg-slate-800/80 px-4 py-1.5 flex justify-between items-center text-slate-400 text-[10px] font-mono border-b border-slate-700/50">
+                                <span>{match ? match[1].toUpperCase() : 'CODE'}</span>
+                            </div>
                             <SyntaxHighlighter
                                 style={vscDarkPlus}
                                 language={match ? match[1] : 'text'}
@@ -361,7 +436,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                 }
 
                 return (
-                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...props}>
+                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...rest}>
                         <Wrapper>{children}</Wrapper>
                     </code>
                 );
@@ -526,7 +601,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                             className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl p-0 shadow-sm hover:shadow-md transition-all duration-200 group overflow-hidden"
                         >
                             {/* Note Toolbar */}
-                            <div className="px-4 py-2 border-b border-gray-50 dark:border-slate-800 flex justify-between items-center bg-gray-50/30 dark:bg-slate-900/30">
+                            <div className="px-4 py-1.5 border-b border-gray-50 dark:border-slate-800 flex justify-between items-center bg-gray-50/30 dark:bg-slate-900/30">
                                 <div className="flex items-center text-[10px] font-medium text-gray-400 dark:text-slate-500 gap-2">
                                     <Calendar size={12} />
                                     <span>{format(note.createdAt, 'MMM d, HH:mm')}</span>
@@ -534,71 +609,66 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 
                                 <div className="flex gap-1">
                                     <button
-                                        onClick={() => onToggleCollapse(note.id)}
+                                        onClick={() => onTogglePin?.(note.id)}
+                                        className={`p-1.5 rounded transition-colors ${note.isPinned ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                                        title={note.isPinned ? "Unpin Note" : "Pin Note to Top"}
+                                    >
+                                        <Pin size={14} className={note.isPinned ? "fill-current" : ""} />
+                                    </button>
+
+                                    <button
+                                        onClick={() => {
+                                            onToggleCollapse(note.id);
+                                        }}
                                         className="p-1.5 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
                                         title={isCollapsed ? "Expand" : "Collapse"}
                                     >
                                         {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                                     </button>
 
+
+
                                     <button
-                                        onClick={() => togglePreview(note.id)}
-                                        className={`p-1.5 rounded transition-colors ${previewNotes.has(note.id) ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
-                                        title={previewNotes.has(note.id) ? "Edit Mode" : "Markdown Preview Mode"}
+                                        onClick={() => handleCopyNote(note)}
+                                        className={`p-1.5 rounded transition-colors ${copiedNoteId === note.id ? 'text-green-600 bg-green-50 dark:bg-green-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                                        title="Copy Content"
                                     >
-                                        {previewNotes.has(note.id) ? <Pencil size={14} /> : <Eye size={14} />}
+                                        {copiedNoteId === note.id ? <Check size={14} /> : <Copy size={14} />}
                                     </button>
                                 </div>
                             </div>
 
-                            {/* Note Content */}
                             <div className="p-0">
-                                {previewNotes.has(note.id) ? (
-                                    <div
-                                        className={`p-4 prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 min-h-[40px] ${isCollapsed ? 'line-clamp-2' : ''}`}
-                                        onCopy={(e) => {
-                                            const selection = window.getSelection();
-                                            if (!selection || selection.rangeCount === 0) return;
-
-                                            const range = selection.getRangeAt(0);
-                                            const container = document.createElement('div');
-                                            container.appendChild(range.cloneContents());
-
-                                            const html = container.innerHTML;
-                                            const markdown = turndown(html);
-
-                                            e.clipboardData.setData('text/plain', markdown);
-                                            e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
-                                            e.preventDefault();
-                                        }}
-                                    >
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents as any}>{note.content}</ReactMarkdown>
-                                    </div>
-                                ) : isCollapsed ? (
-                                    <div className="p-4 text-sm text-gray-800 dark:text-gray-200 leading-[1.6] line-clamp-2 break-all overflow-hidden"
-                                        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '3.2em' }}>
-                                        {note.content ? (
-                                            <HighlightElements query={localSearchQuery} options={searchOptions}>
-                                                {note.content}
-                                            </HighlightElements>
-                                        ) : (
-                                            <span className="opacity-50 italic text-[12px]">Empty note...</span>
-                                        )}
-                                    </div>
-                                ) : (
+                                {isCollapsed ? (
                                     <AutoResizeTextarea
-                                        className="p-4 text-sm text-gray-800 dark:text-gray-200 leading-[1.6]"
+                                        className="px-4 pb-4 pt-1 text-sm text-gray-800 dark:text-gray-200 leading-[1.6]"
                                         value={note.content}
                                         onChange={(newVal) => onUpdateNoteContent(note.id, newVal)}
+                                        onContextMenu={(e) => handleContextMenu(e, false, note.id)}
                                         placeholder="Empty note..."
                                         searchQuery={localSearchQuery}
                                         searchOptions={searchOptions}
+                                        onCopy={() => onTouchNote?.(note.id)}
+                                        onBlur={() => onTouchNote?.(note.id)}
+                                        isCollapsed={true}
+                                    />
+                                ) : (
+                                    <AutoResizeTextarea
+                                        className="px-4 pb-4 pt-1 text-sm text-gray-800 dark:text-gray-200 leading-[1.6]"
+                                        value={note.content}
+                                        onChange={(newVal) => onUpdateNoteContent(note.id, newVal)}
+                                        onContextMenu={(e) => handleContextMenu(e, false, note.id)}
+                                        placeholder="Empty note..."
+                                        searchQuery={localSearchQuery}
+                                        searchOptions={searchOptions}
+                                        onCopy={() => onTouchNote?.(note.id)}
+                                        onBlur={() => onTouchNote?.(note.id)}
                                     />
                                 )}
                             </div>
 
                             {/* Floating message for search */}
-                            {!previewNotes.has(note.id) && !isCollapsed && localSearchQuery && note.content.toLowerCase().includes(localSearchQuery.toLowerCase()) && (
+                            {!isCollapsed && localSearchQuery && note.content.toLowerCase().includes(localSearchQuery.toLowerCase()) && (
                                 <div className="px-4 pb-2 text-[10px] text-blue-500/50 flex items-center gap-1 italic">
                                     <Search size={10} />
                                     <span>Editing note (Matches found)</span>
@@ -608,6 +678,16 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                     );
                 })}
             </div>
+
+            {contextMenu && (
+                <ContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    onCopy={handleCopySelection}
+                    onClose={() => setContextMenu(null)}
+                />
+            )}
         </div>
+
     );
 };

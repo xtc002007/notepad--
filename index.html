@@ -13,6 +13,11 @@
     } else {
       document.documentElement.classList.remove('dark')
     }
+
+    // Disable browser's default context menu for a more native app feel
+    document.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+    });
   </script>
   <script type="module" src="/index.tsx"></script>
 </head>

@@ -140,7 +140,11 @@ const MainApp: React.FC = () => {
     if (activeProjectId === QUICK_NOTES_VIEW_ID) {
       return notes
         .filter((n) => n.projectId === QUICK_NOTES_VIEW_ID)
-        .sort((a, b) => b.createdAt - a.createdAt);
+        .sort((a, b) => {
+          if (a.isPinned && !b.isPinned) return -1;
+          if (!a.isPinned && b.isPinned) return 1;
+          return (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt);
+        });
     }
     return notes.filter((n) => n.projectId === activeProjectId);
   }, [notes, activeProjectId]);
@@ -213,7 +217,12 @@ const MainApp: React.FC = () => {
 
     setActiveProjectId(pid);
     setActiveNoteId(newNote.id);
-    setUserHabits(prev => ({ ...prev, lastActiveProjectId: pid, lastActiveNoteId: newNote.id }));
+    setUserHabits(prev => ({
+      ...prev,
+      lastActiveProjectId: pid,
+      lastActiveNoteId: newNote.id,
+      editorViewMode: 'raw' // Automatically switch to edit mode for new notes
+    }));
   };
 
   const handleRenameNote = (noteId: string, newTitle: string) => {
@@ -228,9 +237,40 @@ const MainApp: React.FC = () => {
   const handleUpdateNoteContent = (noteId: string, newContent: string) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
+      // Don't update updatedAt here to avoid re-sorting while user is typing which causes focus loss.
+      // We rely on handleTouchNote (triggered by onFocus) to bring it to top.
       const updatedNote = { ...note, content: newContent };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
-      storage.saveNote(updatedNote); // 这种全量覆盖的方法对 3万条数据来说是安全的
+      storage.saveNote(updatedNote);
+    }
+  };
+
+  const handleTouchNote = (noteId: string) => {
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+      // Only update if it's been more than 1 second to avoid spamming updates during rapid interactions
+      // Actually user wants "trigger update... show at top", so immediate update is fine.
+      // But let's avoid updating if nothing changed? No, "view/expand" should trigger it.
+      // Use setTimeout to ensure the sorting update doesn't conflict with other immediate UI state updates
+      // (like toggling collapse/preview) that might occur in the same event loop.
+      setTimeout(() => {
+        setNotes(prev => {
+          const currentNote = prev.find(n => n.id === noteId);
+          if (!currentNote) return prev;
+          const updated = { ...currentNote, updatedAt: Date.now() };
+          storage.saveNote(updated);
+          return prev.map(n => n.id === noteId ? updated : n);
+        });
+      }, 50);
+    }
+  };
+
+  const handleTogglePin = (noteId: string) => {
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+      const updatedNote = { ...note, isPinned: !note.isPinned, updatedAt: Date.now() };
+      setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
+      storage.saveNote(updatedNote);
     }
   };
 
@@ -385,8 +425,9 @@ const MainApp: React.FC = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
           theme={settings.theme}
           onToggleTheme={toggleQuickTheme}
-          expandedProjectIds={userHabits.expandedProjectIds}
           onUpdateExpandedProjects={(ids) => setUserHabits(prev => ({ ...prev, expandedProjectIds: ids }))}
+          isSidebarCollapsed={userHabits.isSidebarCollapsed}
+          onToggleSidebar={(collapsed) => setUserHabits(prev => ({ ...prev, isSidebarCollapsed: collapsed }))}
         />
 
         <div className="flex-1 flex flex-col min-w-0">
@@ -402,8 +443,18 @@ const MainApp: React.FC = () => {
                   ? prev.collapsedQuickNoteIds.filter(cid => cid !== id)
                   : [...prev.collapsedQuickNoteIds, id]
               }))}
+              previewNoteIds={userHabits.previewQuickNoteIds || []}
+              onTogglePreview={(id) => setUserHabits(prev => ({
+                ...prev,
+                previewQuickNoteIds: (prev.previewQuickNoteIds || []).includes(id)
+                  ? (prev.previewQuickNoteIds || []).filter(pid => pid !== id)
+                  : [...(prev.previewQuickNoteIds || []), id]
+              }))}
+              highlightNoteId={highlightNoteId}
               highlightNoteId={highlightNoteId}
               searchQuery={navigatedSearchQuery}
+              onTouchNote={handleTouchNote}
+              onTogglePin={handleTogglePin}
             />
           ) : (
             <Workspace

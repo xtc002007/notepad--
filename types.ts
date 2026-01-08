@@ -5,6 +5,8 @@ export interface UserHabits {
   editorViewMode: 'raw' | 'markdown';
   collapsedQuickNoteIds: string[];
   expandedProjectIds: string[];
+  previewQuickNoteIds: string[];
+  isSidebarCollapsed: boolean;
 }
 
 export interface Project {
@@ -26,6 +28,8 @@ export interface Note {
   content: string; // For text notes, this is the body. For files, this might be a URL or placeholder
   title?: string; // For files/images (filename)
   createdAt: number;
+  updatedAt?: number; // Last modified/interacted timestamp
+  isPinned?: boolean; // Whether the note is pinned to the top
 }
 
 export interface SearchResultItem {
@@ -85,4 +89,6 @@ export const DEFAULT_USER_HABITS: UserHabits = {
   editorViewMode: 'raw',
   collapsedQuickNoteIds: [],
   expandedProjectIds: [],
+  previewQuickNoteIds: [],
+  isSidebarCollapsed: false,
 };

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil, Sun, Moon, AlignJustify } from 'lucide-react';
+import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil, Sun, Moon, AlignJustify, MoreVertical, Copy } from 'lucide-react';
 import { Project, Note, NoteType, SearchOptions, Theme } from '../types';
 
 interface SidebarProps {
@@ -22,6 +22,8 @@ interface SidebarProps {
     onToggleTheme: () => void;
     expandedProjectIds: string[];
     onUpdateExpandedProjects: (ids: string[]) => void;
+    isSidebarCollapsed: boolean;
+    onToggleSidebar: (collapsed: boolean) => void;
 }
 
 type SidebarTab = 'projects' | 'search' | 'outline';
@@ -44,9 +46,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     theme,
     onToggleTheme,
     expandedProjectIds,
-    onUpdateExpandedProjects
+    onUpdateExpandedProjects,
+    isSidebarCollapsed,
+    onToggleSidebar
 }) => {
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(isSidebarCollapsed);
+
+    useEffect(() => {
+        setIsCollapsed(isSidebarCollapsed);
+    }, [isSidebarCollapsed]);
     const [activeTab, setActiveTab] = useState<SidebarTab>('projects');
     const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set(expandedProjectIds));
 
@@ -73,6 +81,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const [renameNoteName, setRenameNoteName] = useState('');
     const renameInputRef = useRef<HTMLInputElement>(null);
 
+    // Menu States
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+                setOpenMenuId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -94,18 +116,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
     }, [renamingProjectId, renamingNoteId]);
 
+    // Auto-expand the active project when navigating to it
     useEffect(() => {
         if (activeProjectId && activeProjectId !== 'quick_notes') {
-            setExpandedProjects(prev => new Set(prev).add(activeProjectId));
+            if (!expandedProjects.has(activeProjectId)) {
+                const newSet = new Set(expandedProjects).add(activeProjectId);
+                setExpandedProjects(newSet);
+                // Call parent to persist this auto-expansion
+                onUpdateExpandedProjects(Array.from(newSet));
+            }
         }
-    }, [activeProjectId]);
+    }, [activeProjectId]); // Only run when activeProjectId changes
 
-    // Auto-expand first project on launch
-    useEffect(() => {
-        if (projects.length > 0 && expandedProjectIds.length === 0) {
-            onUpdateExpandedProjects([projects[0].id]);
-        }
-    }, [projects, expandedProjectIds]);
+
 
     const toggleProjectExpand = (e: React.MouseEvent, projectId: string) => {
         e.stopPropagation();
@@ -115,6 +138,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         } else {
             newSet.add(projectId);
         }
+        setExpandedProjects(newSet);
         onUpdateExpandedProjects(Array.from(newSet));
     };
 
@@ -375,7 +399,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className={`flex-1 flex flex-col bg-gray-50 dark:bg-slate-900 transition-all duration-300 overflow-hidden ${isCollapsed ? 'w-0' : 'w-64 opacity-100'}`}>
 
                 <button
-                    onClick={() => setIsCollapsed(!isCollapsed)}
+                    onClick={() => {
+                        const newState = !isCollapsed;
+                        setIsCollapsed(newState);
+                        onToggleSidebar(newState);
+                    }}
                     className="absolute -right-3 top-1/2 -translate-y-1/2 z-50 w-6 h-6 flex items-center justify-center bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-full shadow-md text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors transform hover:scale-110"
                 >
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
@@ -446,28 +474,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 <span className="truncate text-gray-700 dark:text-slate-300">{project.name}</span>
                                             )}
                                         </div>
-                                        <div className="flex items-center gap-0.5 pr-1">
+                                        <div className="relative pr-1" ref={openMenuId === project.id ? menuRef : null}>
                                             <button
-                                                onClick={(e) => { e.stopPropagation(); setExpandedProjects(prev => new Set(prev).add(project.id)); setCreatingNoteInProjectId(project.id); }}
-                                                className="p-1 text-gray-400 hover:text-green-500"
-                                                title="New Note"
+                                                onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === project.id ? null : project.id); }}
+                                                className="p-1 text-gray-400 hover:text-blue-500 rounded opacity-0 group-hover/row:opacity-100 transition-opacity"
                                             >
-                                                <Plus size={12} />
+                                                <MoreVertical size={14} />
                                             </button>
-                                            <button
-                                                onClick={(e) => startRenaming(e, project)}
-                                                className="p-1 text-gray-400 hover:text-blue-500"
-                                                title="Rename"
-                                            >
-                                                <Pencil size={12} />
-                                            </button>
-                                            <button
-                                                onClick={(e) => handleDeleteProjectClick(e, project.id)}
-                                                className="p-1 text-gray-400 hover:text-red-500"
-                                                title="Delete"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
+
+                                            {openMenuId === project.id && (
+                                                <div className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md shadow-lg z-[60] py-1 animate-in fade-in zoom-in-95 duration-100">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); setExpandedProjects(prev => new Set(prev).add(project.id)); setCreatingNoteInProjectId(project.id); }}
+                                                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2"
+                                                    >
+                                                        <Plus size={12} /> New Note
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); startRenaming(e, project); }}
+                                                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2"
+                                                    >
+                                                        <Pencil size={12} /> Rename
+                                                    </button>
+                                                    <div className="h-px bg-gray-100 dark:bg-slate-700 my-1" />
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); handleDeleteProjectClick(e, project.id); }}
+                                                        className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 flex items-center gap-2"
+                                                    >
+                                                        <Trash2 size={12} /> Delete
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     {expandedProjects.has(project.id) && (
@@ -514,21 +551,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                             <span className="truncate">{note.title || 'Untitled'}</span>
                                                         </button>
                                                     )}
-                                                    <div className="absolute right-1 top-1.5 flex gap-0.5 opacity-0 group-hover/note:opacity-100 transition-opacity bg-white dark:bg-slate-900 shadow-sm rounded">
+                                                    <div className="absolute right-1 top-1.5 flex items-center" ref={openMenuId === note.id ? menuRef : null}>
                                                         <button
-                                                            onClick={(e) => handleRenameNoteClick(e, note)}
-                                                            className="p-0.5 text-gray-300 hover:text-blue-500"
-                                                            title="Rename Note"
+                                                            onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === note.id ? null : note.id); }}
+                                                            className="p-1 text-gray-300 hover:text-blue-500 opacity-0 group-hover/note:opacity-100 transition-opacity"
                                                         >
-                                                            <Pencil size={12} />
+                                                            <MoreVertical size={12} />
                                                         </button>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleDeleteNoteClick(e, note.id); }}
-                                                            className="p-0.5 text-gray-300 hover:text-red-500"
-                                                            title="Delete Note"
-                                                        >
-                                                            <Trash2 size={12} />
-                                                        </button>
+
+                                                        {openMenuId === note.id && (
+                                                            <div className="absolute right-0 top-full mt-1 w-28 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md shadow-lg z-[60] py-1 animate-in fade-in zoom-in-95 duration-100">
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); handleRenameNoteClick(e, note); }}
+                                                                    className="w-full text-left px-3 py-1.5 text-[11px] text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2"
+                                                                >
+                                                                    <Pencil size={11} /> Rename
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); handleDeleteNoteClick(e, note.id); }}
+                                                                    className="w-full text-left px-3 py-1.5 text-[11px] text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 flex items-center gap-2"
+                                                                >
+                                                                    <Trash2 size={11} /> Delete
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ))}
