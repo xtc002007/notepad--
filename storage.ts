@@ -22,7 +22,7 @@ export interface StorageService {
 
     clearAllData(): Promise<void>;
     saveAsset(file: File): Promise<string>;
-    getAssetUrl(localPath: string): Promise<string>;
+    loadAssetBlobUrl(localPath: string): Promise<string>;
     getAppDataRoot(): Promise<string>;
     triggerBackup(): Promise<void>;
 }
@@ -205,16 +205,34 @@ export class SqliteStorageService implements StorageService {
     }
 
     async saveAsset(file: File): Promise<string> {
-        const fileName = `${Date.now()}_${file.name}`;
+        const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
         const filePath = await join(this.assetsDir, fileName);
         const arrayBuffer = await file.arrayBuffer();
         await writeFile(filePath, new Uint8Array(arrayBuffer), { baseDir: BaseDirectory.AppData });
-        return filePath;
+        // Important: Normalize to forward slashes for Markdown compatibility
+        return filePath.replace(/\\/g, '/');
     }
 
-    async getAssetUrl(localPath: string): Promise<string> {
-        const fullPath = await join(await appDataDir(), localPath);
-        return convertFileSrc(fullPath);
+    async loadAssetBlobUrl(localPath: string): Promise<string> {
+        try {
+            // "localPath" comes from Markdown as "attachments/foo.png".
+            // readFile with baseDir handles local relative paths correctly.
+            const data = await readFile(localPath, { baseDir: BaseDirectory.AppData });
+
+            // Simple mime inference
+            let mime = 'application/octet-stream';
+            if (localPath.endsWith('.png')) mime = 'image/png';
+            else if (localPath.endsWith('.jpg') || localPath.endsWith('.jpeg')) mime = 'image/jpeg';
+            else if (localPath.endsWith('.gif')) mime = 'image/gif';
+            else if (localPath.endsWith('.webp')) mime = 'image/webp';
+            else if (localPath.endsWith('.svg')) mime = 'image/svg+xml';
+
+            const blob = new Blob([data], { type: mime });
+            return URL.createObjectURL(blob);
+        } catch (e) {
+            console.error('[Storage] Failed to load asset blob:', localPath, e);
+            return '';
+        }
     }
 
     async getAppDataRoot(): Promise<string> {

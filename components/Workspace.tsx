@@ -6,8 +6,9 @@ import * as gfmPlugin from 'turndown-plugin-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Project, Note, NoteType, SearchOptions, AppSettings } from '../types';
-import { File as FileIcon, Search, CaseSensitive, WholeWord, X, ChevronDown, ChevronUp, FileText, Code, Eye, Pencil } from 'lucide-react';
+import { File as FileIcon, Search, CaseSensitive, WholeWord, X, ChevronDown, ChevronUp, FileText, Code, Eye, Pencil, ImageIcon } from 'lucide-react';
 import { ContextMenu } from './ContextMenu';
+import { storage } from '../storage';
 
 
 interface WorkspaceProps {
@@ -15,7 +16,7 @@ interface WorkspaceProps {
     notes: Note[];
     activeNoteId: string | null;
     initialSearchQuery?: string;
-    onAddNote: (content: string, type: NoteType, title?: string) => void;
+    onAddNote: (content: string, type: NoteType, title?: string, specificProjectId?: string) => void;
     onRenameProject: (projectId: string, newName: string) => void;
     onRenameNote: (noteId: string, newTitle: string) => void;
     onUpdateNoteContent: (noteId: string, newContent: string) => void;
@@ -23,6 +24,8 @@ interface WorkspaceProps {
     settings: AppSettings;
     viewMode: 'raw' | 'markdown';
     onViewModeChange: (mode: 'raw' | 'markdown') => void;
+    initialScrollPosition?: number;
+    onUpdateScrollPosition?: (id: string, pos: number) => void;
 }
 
 // --- Helper: Highlight logic for raw text ---
@@ -132,6 +135,17 @@ turndownService.addRule('paragraph', {
     }
 });
 
+// Rule 6: Images
+turndownService.addRule('img', {
+    filter: 'img',
+    replacement: (content, node: any) => {
+        const alt = node.getAttribute('alt') || '';
+        const src = node.getAttribute('src') || '';
+        if (!src) return '';
+        return `![${alt}](${src})`;
+    }
+});
+
 const turndown = (html: string) => {
     // 1. Replace NBSP with normal spaces and clean HTML entities
     const cleanHtml = html
@@ -215,17 +229,63 @@ const HighlightElements: React.FC<HighlightElementsProps> = ({ children, query, 
     return <>{children}</>;
 };
 
+// --- Helper: Markdown Image Component ---
+const MarkdownImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
+    const [url, setUrl] = useState(src);
+
+    useEffect(() => {
+        let isCancelled = false;
+        let blobUrl = '';
+
+        if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+            // Decode in case markdown parser encoded it, although typically we want the raw path
+            storage.loadAssetBlobUrl(src).then(newUrl => {
+                if (!isCancelled && newUrl) {
+                    blobUrl = newUrl;
+                    setUrl(newUrl);
+                }
+            }).catch(err => {
+                console.error('Failed to get asset URL:', err);
+            });
+        }
+
+        return () => {
+            isCancelled = true;
+            if (blobUrl) URL.revokeObjectURL(blobUrl);
+        };
+    }, [src]);
+
+    return (
+        <div className="my-4 flex flex-col items-center">
+            <img
+                src={url}
+                alt={alt}
+                className="max-w-full h-auto rounded-lg shadow-md border border-gray-200 dark:border-slate-800"
+                onError={(e) => {
+                    console.error('Image load error:', src);
+                    // Fallback or placeholder could go here
+                }}
+            />
+            {alt && <span className="text-xs text-gray-500 mt-2 italic">{alt}</span>}
+        </div>
+    );
+};
+
 export const Workspace: React.FC<WorkspaceProps> = ({
     project,
     notes,
     activeNoteId,
     initialSearchQuery,
+    onAddNote,
     onRenameProject,
     onRenameNote,
     onUpdateNoteContent,
+    highlightNoteId,
     settings,
     viewMode,
     onViewModeChange,
+    initialScrollPosition = 0,
+    onUpdateScrollPosition,
 }) => {
     const [isSearchVisible, setIsSearchVisible] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -255,6 +315,33 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             setSearchQuery('');
         }
     }, [initialSearchQuery, activeNoteId, onViewModeChange]);
+
+    // Restore scroll position
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (viewMode === 'raw' && textareaRef.current) {
+                textareaRef.current.scrollTop = initialScrollPosition;
+            } else if (viewMode === 'markdown' && previewContainerRef.current) {
+                previewContainerRef.current.scrollTop = initialScrollPosition;
+            }
+        }, 50); // Small delay to allow content to render
+        return () => clearTimeout(timer);
+    }, [activeNoteId, viewMode, initialScrollPosition]);
+
+    // Debounced scroll tracking
+    const scrollTimeoutRef = useRef<any>(null);
+    const lastSavedPos = useRef<number>(initialScrollPosition);
+
+    const trackScroll = (scrollTop: number) => {
+        if (!activeNoteId || !onUpdateScrollPosition) return;
+        if (Math.abs(lastSavedPos.current - scrollTop) < 50) return; // Only save if moved enough
+
+        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => {
+            onUpdateScrollPosition(activeNoteId, scrollTop);
+            lastSavedPos.current = scrollTop;
+        }, 500);
+    };
 
     const searchMatchesCount = useMemo(() => {
         if (!searchQuery || !activeNote || !activeNote.content) return 0;
@@ -350,6 +437,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             if (lineNumbersRef.current) {
                 lineNumbersRef.current.scrollTop = scrollTop;
             }
+            trackScroll(scrollTop);
+        }
+    };
+
+    const handleMarkdownScroll = () => {
+        if (previewContainerRef.current) {
+            trackScroll(previewContainerRef.current.scrollTop);
         }
     };
 
@@ -474,6 +568,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             },
             a: ({ children, href }: any) => <a href={href} className="text-blue-600 hover:underline"><Wrapper>{children}</Wrapper></a>,
             del: ({ children }: any) => <del><Wrapper>{children}</Wrapper></del>,
+            img: ({ src, alt }: any) => <MarkdownImage src={src} alt={alt} />,
             td: ({ children }: any) => <td className="border border-gray-200 dark:border-slate-800 px-4 py-2"><Wrapper>{children}</Wrapper></td>,
             th: ({ children }: any) => <th className="border border-gray-200 dark:border-slate-800 px-4 py-2 bg-gray-100 dark:bg-slate-800"><Wrapper>{children}</Wrapper></th>,
         };
@@ -611,6 +706,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                             ref={previewContainerRef}
                             className="h-full w-full overflow-y-auto custom-scrollbar prose dark:prose-invert max-w-none p-4 cursor-text"
                             onDoubleClick={() => onViewModeChange('raw')}
+                            onScroll={handleMarkdownScroll}
                             onCopy={(e) => {
                                 const selection = window.getSelection();
                                 if (!selection || selection.rangeCount === 0) return;
@@ -662,10 +758,51 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                                     e.clipboardData.setData('text/html', `<div style="font-family: sans-serif;">${html}</div>`);
                                     e.preventDefault();
                                 }}
-                                onPaste={(e) => {
-                                    const html = e.clipboardData.getData('text/html');
+                                onPaste={async (e) => {
+                                    const clipboardData = e.clipboardData;
+                                    if (!clipboardData) return;
+
+                                    const items = Array.from(clipboardData.items);
+                                    const files = Array.from(clipboardData.files);
+
+                                    // Try to find image in items or files
+                                    const imageItem = items.find(item => item.type.startsWith('image/'));
+                                    const imageFile = files.find(file => file.type.startsWith('image/'));
+
+                                    const targetFile = imageFile || (imageItem ? imageItem.getAsFile() : null);
+
+                                    if (targetFile) {
+                                        e.preventDefault();
+
+                                        // Capture state synchronously before any await
+                                        const textarea = e.currentTarget;
+                                        const start = textarea.selectionStart;
+                                        const end = textarea.selectionEnd;
+                                        const val = textarea.value;
+
+                                        try {
+                                            const relativePath = await storage.saveAsset(targetFile);
+                                            const markdownImage = `\n![${targetFile.name || 'image'}](${relativePath})\n`;
+
+                                            const newVal = val.substring(0, start) + markdownImage + val.substring(end);
+                                            onUpdateNoteContent(activeNote.id, newVal);
+
+                                            // Update cursor position after React re-renders
+                                            setTimeout(() => {
+                                                if (textareaRef.current) {
+                                                    const newCursorPos = start + markdownImage.length;
+                                                    textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+                                                }
+                                            }, 0);
+                                        } catch (err) {
+                                            console.error('Failed to save pasted image:', err);
+                                        }
+                                        return;
+                                    }
+
+                                    const html = clipboardData.getData('text/html');
                                     // Significantly broaden the detection:
-                                    const hasRichContent = html && /<p|h\d|ul|ol|li|table|tr|td|blockquote|pre|code|strong|em/i.test(html);
+                                    const hasRichContent = html && /<p|h\d|ul|ol|li|table|tr|td|blockquote|pre|code|strong|em|img/i.test(html);
                                     const hasCodeIndicators = html && /monospace|monaco|vscode|consolas|courier|hljs|ace_/i.test(html);
 
                                     if (html && (hasRichContent || hasCodeIndicators)) {

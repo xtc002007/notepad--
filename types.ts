@@ -1,12 +1,15 @@
-
 export interface UserHabits {
   lastActiveProjectId: string | null;
   lastActiveNoteId: string | null;
   editorViewMode: 'raw' | 'markdown';
-  collapsedQuickNoteIds: string[];
+  collapsedNoteIds: string[];
   expandedProjectIds: string[];
-  previewQuickNoteIds: string[];
+  previewNoteIds: string[];
   isSidebarCollapsed: boolean;
+  noteScrollPositions: Record<string, number>;
+  projectLastNoteIds: Record<string, string>;
+  projectViewModes: Record<string, 'list' | 'detail'>;
+  projectScrollPositions: Record<string, number>;
 }
 
 export interface Project {
@@ -29,7 +32,7 @@ export interface Note {
   title?: string; // For files/images (filename)
   createdAt: number;
   updatedAt?: number; // Last modified/interacted timestamp
-  isPinned?: boolean; // Whether the note is pinned to the top
+  isPinned?: boolean;
 }
 
 export interface SearchResultItem {
@@ -87,8 +90,12 @@ export const DEFAULT_USER_HABITS: UserHabits = {
   lastActiveProjectId: 'quick_notes',
   lastActiveNoteId: null,
   editorViewMode: 'raw',
-  collapsedQuickNoteIds: [],
+  collapsedNoteIds: [],
   expandedProjectIds: [],
-  previewQuickNoteIds: [],
+  previewNoteIds: [],
   isSidebarCollapsed: false,
+  noteScrollPositions: {},
+  projectLastNoteIds: {},
+  projectViewModes: { 'quick_notes': 'list' },
+  projectScrollPositions: {},
 };

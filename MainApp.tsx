@@ -53,13 +53,34 @@ const MainApp: React.FC = () => {
           storage.getSettings(),
           storage.getUserHabits()
         ]);
+
+        // Migrate old keys if present
+        const migrated = { ...loadedHabits };
+        const raw = loadedHabits as any;
+        if (raw.collapsedQuickNoteIds && !migrated.collapsedNoteIds?.length) {
+          migrated.collapsedNoteIds = raw.collapsedQuickNoteIds;
+        }
+        if (raw.previewQuickNoteIds && !migrated.previewNoteIds?.length) {
+          migrated.previewNoteIds = raw.previewQuickNoteIds;
+        }
+
+        const initialActive = migrated.lastActiveProjectId || QUICK_NOTES_VIEW_ID;
+
+        // Ensure initial active project is expanded
+        if (initialActive !== QUICK_NOTES_VIEW_ID && initialActive !== 'uncategorized') {
+          const currentExpanded = migrated.expandedProjectIds || [];
+          if (!currentExpanded.includes(initialActive)) {
+            migrated.expandedProjectIds = [...currentExpanded, initialActive];
+          }
+        }
+
         setProjects(loadedProjects);
         setNotes(loadedNotes);
         setSettings(loadedSettings);
-        setUserHabits(loadedHabits);
+        setUserHabits(migrated);
 
         // Set initial active state based on habits
-        setActiveProjectId(loadedHabits.lastActiveProjectId || QUICK_NOTES_VIEW_ID);
+        setActiveProjectId(initialActive);
         setActiveNoteId(loadedHabits.lastActiveNoteId);
       } catch (error) {
         console.error("Failed to load initial data", error);
@@ -221,7 +242,8 @@ const MainApp: React.FC = () => {
       ...prev,
       lastActiveProjectId: pid,
       lastActiveNoteId: newNote.id,
-      editorViewMode: 'raw' // Automatically switch to edit mode for new notes
+      editorViewMode: 'raw',
+      projectLastNoteIds: { ...prev.projectLastNoteIds, [pid]: newNote.id }
     }));
   };
 
@@ -305,35 +327,51 @@ const MainApp: React.FC = () => {
 
   const handleNavigate = (type: 'project' | 'note', id: string, searchQuery?: string) => {
     if (type === 'project') {
-      setActiveProjectId(id);
-      setUserHabits(prev => ({ ...prev, lastActiveProjectId: id, lastActiveNoteId: null }));
-      setNavigatedSearchQuery(searchQuery || ''); // Preserve search query if provided
+      const projectId = id;
+      setActiveProjectId(projectId);
+      setNavigatedSearchQuery(searchQuery || '');
 
-      // Auto-open first note if available
-      const projectNotes = notes
-        .filter(n => n.projectId === id)
-        .sort((a, b) => b.createdAt - a.createdAt);
+      // Restore last active note for this project or default to first
+      const lastNoteId = userHabits.projectLastNoteIds[projectId];
+      const projectNotes = notes.filter(n => n.projectId === projectId);
 
-      if (projectNotes.length > 0) {
-        setActiveNoteId(projectNotes[0].id);
-        setUserHabits(prev => ({ ...prev, lastActiveNoteId: projectNotes[0].id }));
-      } else {
-        setActiveNoteId(null);
+      let noteToOpen = null;
+      if (lastNoteId && projectNotes.some(n => n.id === lastNoteId)) {
+        noteToOpen = lastNoteId;
+      } else if (projectNotes.length > 0) {
+        // Sort to get most recent if no memory
+        const sorted = [...projectNotes].sort((a, b) => b.updatedAt - a.updatedAt);
+        noteToOpen = sorted[0].id;
       }
 
+      setActiveNoteId(noteToOpen);
       setHighlightNoteId(undefined);
+
+      setUserHabits(prev => ({
+        ...prev,
+        lastActiveProjectId: projectId,
+        lastActiveNoteId: noteToOpen,
+        projectLastNoteIds: noteToOpen ? { ...prev.projectLastNoteIds, [projectId]: noteToOpen } : prev.projectLastNoteIds,
+        expandedProjectIds: prev.expandedProjectIds.includes(projectId) ? prev.expandedProjectIds : [...prev.expandedProjectIds, projectId]
+      }));
     } else { // type === 'note'
-      const note = notes.find(n => n.id === id);
+      const noteId = id;
+      const note = notes.find(n => n.id === noteId);
       if (note) {
-        setActiveProjectId(note.projectId === 'uncategorized' ? null : note.projectId);
-        setActiveNoteId(id);
+        const pid = note.projectId === 'uncategorized' ? null : note.projectId;
+        setActiveProjectId(pid);
+        setActiveNoteId(noteId);
+        setNavigatedSearchQuery(searchQuery || '');
+        setHighlightNoteId(noteId);
+
         setUserHabits(prev => ({
           ...prev,
-          lastActiveProjectId: note.projectId === 'uncategorized' ? null : note.projectId,
-          lastActiveNoteId: id
+          lastActiveProjectId: pid,
+          lastActiveNoteId: noteId,
+          projectLastNoteIds: pid ? { ...prev.projectLastNoteIds, [pid]: noteId } : prev.projectLastNoteIds,
+          expandedProjectIds: (pid && !prev.expandedProjectIds.includes(pid)) ? [...prev.expandedProjectIds, pid] : prev.expandedProjectIds
         }));
-        setHighlightNoteId(id);
-        setNavigatedSearchQuery(searchQuery || '');
+
         setTimeout(() => setHighlightNoteId(undefined), 2000);
       }
     }
@@ -425,36 +463,46 @@ const MainApp: React.FC = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
           theme={settings.theme}
           onToggleTheme={toggleQuickTheme}
+          expandedProjectIds={userHabits.expandedProjectIds || []}
           onUpdateExpandedProjects={(ids) => setUserHabits(prev => ({ ...prev, expandedProjectIds: ids }))}
           isSidebarCollapsed={userHabits.isSidebarCollapsed}
           onToggleSidebar={(collapsed) => setUserHabits(prev => ({ ...prev, isSidebarCollapsed: collapsed }))}
+          projectViewModes={userHabits.projectViewModes || {}}
+          onUpdateProjectViewMode={(id, mode) => setUserHabits(prev => ({
+            ...prev,
+            projectViewModes: { ...prev.projectViewModes, [id]: mode }
+          }))}
         />
 
         <div className="flex-1 flex flex-col min-w-0">
-          {activeProjectId === QUICK_NOTES_VIEW_ID ? (
+          {(activeProjectId === QUICK_NOTES_VIEW_ID || userHabits.projectViewModes[activeProjectId || ''] === 'list') ? (
             <QuickNotesView
               notes={activeNotes}
               onAddNote={handleAddNote}
               onUpdateNoteContent={handleUpdateNoteContent}
-              collapsedNoteIds={userHabits.collapsedQuickNoteIds}
+              collapsedNoteIds={userHabits.collapsedNoteIds || []}
               onToggleCollapse={(id) => setUserHabits(prev => ({
                 ...prev,
-                collapsedQuickNoteIds: prev.collapsedQuickNoteIds.includes(id)
-                  ? prev.collapsedQuickNoteIds.filter(cid => cid !== id)
-                  : [...prev.collapsedQuickNoteIds, id]
+                collapsedNoteIds: (prev.collapsedNoteIds || []).includes(id)
+                  ? (prev.collapsedNoteIds || []).filter(cid => cid !== id)
+                  : [...(prev.collapsedNoteIds || []), id]
               }))}
-              previewNoteIds={userHabits.previewQuickNoteIds || []}
+              previewNoteIds={userHabits.previewNoteIds || []}
               onTogglePreview={(id) => setUserHabits(prev => ({
                 ...prev,
-                previewQuickNoteIds: (prev.previewQuickNoteIds || []).includes(id)
-                  ? (prev.previewQuickNoteIds || []).filter(pid => pid !== id)
-                  : [...(prev.previewQuickNoteIds || []), id]
+                previewNoteIds: (prev.previewNoteIds || []).includes(id)
+                  ? (prev.previewNoteIds || []).filter(pid => pid !== id)
+                  : [...(prev.previewNoteIds || []), id]
               }))}
               highlightNoteId={highlightNoteId}
-              highlightNoteId={highlightNoteId}
-              searchQuery={navigatedSearchQuery}
+              globalSearchQuery={navigatedSearchQuery}
               onTouchNote={handleTouchNote}
               onTogglePin={handleTogglePin}
+              initialScrollPosition={userHabits.projectScrollPositions[`${activeProjectId}_list`] || 0}
+              onUpdateScrollPosition={(pos) => setUserHabits(prev => ({
+                ...prev,
+                projectScrollPositions: { ...prev.projectScrollPositions, [`${activeProjectId}_list`]: pos }
+              }))}
             />
           ) : (
             <Workspace
@@ -470,6 +518,11 @@ const MainApp: React.FC = () => {
               settings={settings}
               viewMode={userHabits.editorViewMode}
               onViewModeChange={(mode) => setUserHabits(prev => ({ ...prev, editorViewMode: mode }))}
+              initialScrollPosition={activeNoteId ? (userHabits.noteScrollPositions[activeNoteId] || 0) : 0}
+              onUpdateScrollPosition={(id, pos) => setUserHabits(prev => ({
+                ...prev,
+                noteScrollPositions: { ...prev.noteScrollPositions, [id]: pos }
+              }))}
             />
           )}
         </div>

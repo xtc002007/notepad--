@@ -17,6 +17,7 @@
         "fs:allow-write-file",
         "fs:allow-exists",
         "fs:allow-remove",
+        "core:path:default",
         "dialog:default",
         "core:window:allow-close",
         "core:window:allow-destroy",

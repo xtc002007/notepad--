@@ -3,6 +3,7 @@ import { Note, NoteType, SearchOptions } from '../types';
 import { Zap, Plus, X, Calendar, Pencil, Eye, Search, ChevronDown, ChevronRight, CaseSensitive, WholeWord, ChevronUp, Copy, Check, Pin } from 'lucide-react';
 import { ContextMenu } from './ContextMenu';
 import { format } from 'date-fns';
+import { storage } from '../storage';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,10 +18,14 @@ interface QuickNotesViewProps {
     onUpdateNoteContent: (noteId: string, newContent: string) => void;
     collapsedNoteIds: string[];
     onToggleCollapse: (noteId: string) => void;
+    previewNoteIds: string[];
+    onTogglePreview: (noteId: string) => void;
     highlightNoteId?: string;
-    searchQuery?: string;
+    globalSearchQuery?: string;
     onTouchNote?: (noteId: string) => void;
     onTogglePin?: (noteId: string) => void;
+    initialScrollPosition?: number;
+    onUpdateScrollPosition?: (pos: number) => void;
 }
 
 // --- Helper: Highlight logic ---
@@ -125,6 +130,17 @@ turndownService.addRule('paragraph', {
     }
 });
 
+// Rule 6: Images
+turndownService.addRule('img', {
+    filter: 'img',
+    replacement: (content, node: any) => {
+        const alt = node.getAttribute('alt') || '';
+        const src = node.getAttribute('src') || '';
+        if (!src) return '';
+        return `![${alt}](${src})`;
+    }
+});
+
 const turndown = (html: string) => {
     const cleanHtml = html
         .replace(/\u00a0/g, ' ')
@@ -165,6 +181,48 @@ const HighlightElements: React.FC<{
     }
 
     return <>{children}</>;
+};
+
+// --- Helper: Markdown Image Component ---
+const MarkdownImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
+    const [url, setUrl] = useState(src);
+
+    useEffect(() => {
+        let isCancelled = false;
+        let blobUrl = '';
+
+        if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+            // Decode in case markdown parser encoded it
+            const decodedSrc = decodeURIComponent(src);
+            storage.loadAssetBlobUrl(decodedSrc).then(newUrl => {
+                if (!isCancelled && newUrl) {
+                    blobUrl = newUrl;
+                    setUrl(newUrl);
+                }
+            }).catch(err => {
+                console.error('Failed to get asset URL:', err);
+            });
+        }
+
+        return () => {
+            isCancelled = true;
+            if (blobUrl) URL.revokeObjectURL(blobUrl);
+        };
+    }, [src]);
+
+    return (
+        <div className="my-2 flex flex-col items-center">
+            <img
+                src={url}
+                alt={alt}
+                className="max-w-full h-auto rounded-lg shadow-sm border border-gray-200 dark:border-slate-800"
+                onError={(e) => {
+                    console.error('Image load error:', src);
+                }}
+            />
+            {alt && <span className="text-[10px] text-gray-500 mt-1 italic">{alt}</span>}
+        </div>
+    );
 };
 
 const AutoResizeTextarea: React.FC<{
@@ -255,9 +313,45 @@ const AutoResizeTextarea: React.FC<{
                     e.preventDefault();
                     if (onCopy) onCopy();
                 }}
-                onPaste={(e) => {
-                    const html = e.clipboardData.getData('text/html');
-                    const hasRichContent = html && /<p|h\d|ul|ol|li|table|tr|td|blockquote|pre|code|strong|em/i.test(html);
+                onPaste={async (e) => {
+                    const clipboardData = e.clipboardData;
+                    if (!clipboardData) return;
+
+                    const items = Array.from(clipboardData.items);
+                    const files = Array.from(clipboardData.files);
+
+                    const imageItem = items.find(item => item.type.startsWith('image/'));
+                    const imageFile = files.find(file => file.type.startsWith('image/'));
+
+                    const targetFile = imageFile || (imageItem ? imageItem.getAsFile() : null);
+
+                    if (targetFile) {
+                        e.preventDefault();
+
+                        // Capture state synchronously before any await
+                        const textarea = e.currentTarget;
+                        const start = textarea.selectionStart;
+                        const end = textarea.selectionEnd;
+                        const val = textarea.value;
+
+                        try {
+                            const relativePath = await storage.saveAsset(targetFile);
+                            const markdownImage = `\n![${targetFile.name || 'image'}](${relativePath})\n`;
+
+                            const newVal = val.substring(0, start) + markdownImage + val.substring(end);
+                            onChange(newVal);
+
+                            setTimeout(() => {
+                                textarea.setSelectionRange(start + markdownImage.length, start + markdownImage.length);
+                            }, 0);
+                        } catch (err) {
+                            console.error('Failed to save pasted image:', err);
+                        }
+                        return;
+                    }
+
+                    const html = clipboardData.getData('text/html');
+                    const hasRichContent = html && /<p|h\d|ul|ol|li|table|tr|td|blockquote|pre|code|strong|em|img/i.test(html);
                     const hasCodeIndicators = html && /monospace|monaco|vscode|consolas|courier|hljs|ace_/i.test(html);
 
                     if (html && (hasRichContent || hasCodeIndicators)) {
@@ -294,10 +388,14 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
     onUpdateNoteContent,
     collapsedNoteIds,
     onToggleCollapse,
+    previewNoteIds = [],
+    onTogglePreview,
     highlightNoteId,
-    searchQuery,
+    searchQuery: globalSearchQuery,
     onTouchNote,
-    onTogglePin
+    onTogglePin,
+    initialScrollPosition = 0,
+    onUpdateScrollPosition
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [newContent, setNewContent] = useState('');
@@ -310,14 +408,14 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 
     // Sync with global search query when it changes
     useEffect(() => {
-        if (searchQuery) {
-            setLocalSearchQuery(searchQuery);
+        if (globalSearchQuery) {
+            setLocalSearchQuery(globalSearchQuery);
             setIsSearchVisible(true);
         } else {
             setIsSearchVisible(false);
             setLocalSearchQuery('');
         }
-    }, [searchQuery]);
+    }, [globalSearchQuery]);
 
     const filteredNotes = React.useMemo(() => {
         if (!localSearchQuery) return notes;
@@ -411,6 +509,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
             h3: ({ children }: any) => <h3 className="text-base font-bold mb-1"><Wrapper>{children}</Wrapper></h3>,
             strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
             em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
+            img: ({ src, alt }: any) => <MarkdownImage src={src} alt={alt} />,
             code: (props: any) => {
                 const { className, children, ...rest } = props;
                 const match = /language-(\w+)/.exec(className || '');
@@ -582,7 +681,11 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
             )}
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+            <div
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar"
+            >
                 {notes.length === 0 && !isAdding && (
                     <div className="flex flex-col items-center justify-center h-64 text-gray-400 dark:text-slate-600">
                         <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4 text-gray-300 dark:text-slate-500">
@@ -629,6 +732,14 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 
 
                                     <button
+                                        onClick={() => onTogglePreview?.(note.id)}
+                                        className={`p-1.5 rounded transition-colors ${previewNoteIds.includes(note.id) ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                                        title={previewNoteIds.includes(note.id) ? "Editor Mode" : "Preview Mode"}
+                                    >
+                                        <Eye size={14} />
+                                    </button>
+
+                                    <button
                                         onClick={() => handleCopyNote(note)}
                                         className={`p-1.5 rounded transition-colors ${copiedNoteId === note.id ? 'text-green-600 bg-green-50 dark:bg-green-900/20' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
                                         title="Copy Content"
@@ -640,18 +751,37 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 
                             <div className="p-0">
                                 {isCollapsed ? (
-                                    <AutoResizeTextarea
-                                        className="px-4 pb-4 pt-1 text-sm text-gray-800 dark:text-gray-200 leading-[1.6]"
-                                        value={note.content}
-                                        onChange={(newVal) => onUpdateNoteContent(note.id, newVal)}
-                                        onContextMenu={(e) => handleContextMenu(e, false, note.id)}
-                                        placeholder="Empty note..."
-                                        searchQuery={localSearchQuery}
-                                        searchOptions={searchOptions}
-                                        onCopy={() => onTouchNote?.(note.id)}
-                                        onBlur={() => onTouchNote?.(note.id)}
-                                        isCollapsed={true}
-                                    />
+                                    <div className="px-4 py-3 text-sm text-gray-400 italic truncate overflow-hidden">
+                                        {note.content.substring(0, 100) || "Empty note..."}
+                                    </div>
+                                ) : previewNoteIds.includes(note.id) ? (
+                                    <div className="px-4 pb-4 pt-1 prose dark:prose-invert max-w-none prose-sm">
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkGfm]}
+                                            components={{
+                                                img: ({ node, ...props }) => <MarkdownImage src={props.src || ''} alt={props.alt || ''} />,
+                                                code({ node, inline, className, children, ...props }: any) {
+                                                    const match = /language-(\w+)/.exec(className || '');
+                                                    return !inline && match ? (
+                                                        <SyntaxHighlighter
+                                                            style={vscDarkPlus}
+                                                            language={match[1]}
+                                                            PreTag="div"
+                                                            {...props}
+                                                        >
+                                                            {String(children).replace(/\n$/, '')}
+                                                        </SyntaxHighlighter>
+                                                    ) : (
+                                                        <code className={className} {...props}>
+                                                            {children}
+                                                        </code>
+                                                    );
+                                                },
+                                            }}
+                                        >
+                                            {note.content}
+                                        </ReactMarkdown>
+                                    </div>
                                 ) : (
                                     <AutoResizeTextarea
                                         className="px-4 pb-4 pt-1 text-sm text-gray-800 dark:text-gray-200 leading-[1.6]"

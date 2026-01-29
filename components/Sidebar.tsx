@@ -24,6 +24,8 @@ interface SidebarProps {
     onUpdateExpandedProjects: (ids: string[]) => void;
     isSidebarCollapsed: boolean;
     onToggleSidebar: (collapsed: boolean) => void;
+    projectViewModes: Record<string, 'list' | 'detail'>;
+    onUpdateProjectViewMode: (id: string, mode: 'list' | 'detail') => void;
 }
 
 type SidebarTab = 'projects' | 'search' | 'outline';
@@ -48,7 +50,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     expandedProjectIds,
     onUpdateExpandedProjects,
     isSidebarCollapsed,
-    onToggleSidebar
+    onToggleSidebar,
+    projectViewModes,
+    onUpdateProjectViewMode
 }) => {
     const [isCollapsed, setIsCollapsed] = useState(isSidebarCollapsed);
 
@@ -116,17 +120,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
     }, [renamingProjectId, renamingNoteId]);
 
-    // Auto-expand the active project when navigating to it
-    useEffect(() => {
-        if (activeProjectId && activeProjectId !== 'quick_notes') {
-            if (!expandedProjects.has(activeProjectId)) {
-                const newSet = new Set(expandedProjects).add(activeProjectId);
-                setExpandedProjects(newSet);
-                // Call parent to persist this auto-expansion
-                onUpdateExpandedProjects(Array.from(newSet));
-            }
-        }
-    }, [activeProjectId]); // Only run when activeProjectId changes
+    // Auto-expand logic is now handled by parent (MainApp) to avoid race conditions.
+    // Sidebar just reflects the props.
 
 
 
@@ -495,6 +490,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                         className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2"
                                                     >
                                                         <Pencil size={12} /> Rename
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                            const currentMode = projectViewModes[project.id] || 'detail';
+                                                            onUpdateProjectViewMode(project.id, currentMode === 'list' ? 'detail' : 'list');
+                                                        }}
+                                                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2"
+                                                    >
+                                                        {projectViewModes[project.id] === 'list' ? <FileText size={12} /> : <Zap size={12} />}
+                                                        {projectViewModes[project.id] === 'list' ? 'Detail View' : 'Stream View'}
                                                     </button>
                                                     <div className="h-px bg-gray-100 dark:bg-slate-700 my-1" />
                                                     <button
