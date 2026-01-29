@@ -133,7 +133,7 @@ export class SqliteStorageService implements StorageService {
 
     async getNotes(): Promise<Note[]> {
         if (!this.db) await this.init();
-        const notes = await this.db!.select<Note[]>('SELECT * FROM notes ORDER BY createdAt DESC');
+        const notes = await this.db!.select<Note[]>('SELECT * FROM notes ORDER BY COALESCE(updatedAt, createdAt) DESC');
         return notes.map(n => ({
             ...n,
             isPinned: !!n.isPinned // Ensure boolean type

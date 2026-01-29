@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil, Sun, Moon, AlignJustify, MoreVertical, Copy } from 'lucide-react';
+import { Plus, Folder, FolderOpen, Check, Zap, Settings, Search, FileText, File, Hash, ChevronLeft, ChevronRight, ChevronDown, CaseSensitive, WholeWord, X, Trash2, Pencil, Sun, Moon, AlignJustify, MoreVertical, Copy, Merge } from 'lucide-react';
+import { ConfirmDialog } from './ConfirmDialog';
 import { Project, Note, NoteType, SearchOptions, Theme } from '../types';
 
 interface SidebarProps {
@@ -26,6 +27,7 @@ interface SidebarProps {
     onToggleSidebar: (collapsed: boolean) => void;
     projectViewModes: Record<string, 'list' | 'detail'>;
     onUpdateProjectViewMode: (id: string, mode: 'list' | 'detail') => void;
+    onMergeProjects?: (projectIds: string[]) => void;
 }
 
 type SidebarTab = 'projects' | 'search' | 'outline';
@@ -52,7 +54,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     isSidebarCollapsed,
     onToggleSidebar,
     projectViewModes,
-    onUpdateProjectViewMode
+
+    onUpdateProjectViewMode,
+    onMergeProjects
 }) => {
     const [isCollapsed, setIsCollapsed] = useState(isSidebarCollapsed);
 
@@ -65,6 +69,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     useEffect(() => {
         setExpandedProjects(new Set(expandedProjectIds));
     }, [expandedProjectIds]);
+
+    // Merge Mode State
+    const [isMergeMode, setIsMergeMode] = useState(false);
+    const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+    const [showMergeConfirm, setShowMergeConfirm] = useState(false);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
@@ -409,9 +418,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className={`absolute inset-0 flex flex-col transition-all duration-300 transform ${activeTab === 'projects' ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 pointer-events-none'}`}>
                         <div className="px-4 py-4 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between">
                             <span className="text-xs font-bold text-gray-500 dark:text-slate-500 uppercase tracking-tight">Explorer</span>
-                            <button onClick={handleCreateClick} className="p-1 hover:bg-gray-200 dark:hover:bg-slate-800 rounded text-gray-500 dark:text-slate-400">
-                                <Plus size={16} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                                {!isMergeMode ? (
+                                    <>
+                                        <button
+                                            onClick={() => { setIsMergeMode(true); setSelectedProjectIds(new Set()); }}
+                                            className="p-1 hover:bg-gray-200 dark:hover:bg-slate-800 rounded text-gray-500 dark:text-slate-400"
+                                            title="Merge Projects"
+                                        >
+                                            <Merge size={16} />
+                                        </button>
+                                        <button onClick={handleCreateClick} className="p-1 hover:bg-gray-200 dark:hover:bg-slate-800 rounded text-gray-500 dark:text-slate-400">
+                                            <Plus size={16} />
+                                        </button>
+                                    </>
+                                ) : (
+                                    <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
+                                        <button
+                                            onClick={() => { setIsMergeMode(false); setSelectedProjectIds(new Set()); }}
+                                            className="px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-800 rounded transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            onClick={() => setShowMergeConfirm(true)}
+                                            disabled={selectedProjectIds.size < 2}
+                                            className="px-2 py-0.5 text-[10px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                        >
+                                            <Merge size={12} /> ({selectedProjectIds.size})
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         {isCreating && (
@@ -448,7 +486,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                             {projects.map((project) => (
                                 <div key={project.id} className="mb-0.5">
-                                    <div className={`w-full flex items-center px-2 py-1.5 text-sm cursor-pointer group/row ${activeProjectId === project.id ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`} onClick={() => onSelectProject('project', project.id)}>
+                                    <div
+                                        className={`w-full flex items-center px-2 py-1.5 text-sm cursor-pointer group/row ${activeProjectId === project.id ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-gray-100 dark:hover:bg-slate-800'} ${isMergeMode && selectedProjectIds.has(project.id) ? 'bg-blue-100/50 dark:bg-blue-900/30' : ''}`}
+                                        onClick={() => {
+                                            if (isMergeMode) {
+                                                const newSet = new Set(selectedProjectIds);
+                                                if (newSet.has(project.id)) newSet.delete(project.id);
+                                                else newSet.add(project.id);
+                                                setSelectedProjectIds(newSet);
+                                            } else {
+                                                onSelectProject('project', project.id);
+                                            }
+                                        }}
+                                    >
+                                        {isMergeMode && (
+                                            <div className="pr-2 flex items-center" onClick={(e) => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedProjectIds.has(project.id)}
+                                                    onChange={(e) => {
+                                                        const newSet = new Set(selectedProjectIds);
+                                                        if (e.target.checked) newSet.add(project.id);
+                                                        else newSet.delete(project.id);
+                                                        setSelectedProjectIds(newSet);
+                                                    }}
+                                                    className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                                                />
+                                            </div>
+                                        )}
                                         <button onClick={(e) => toggleProjectExpand(e, project.id)} className="p-1 text-gray-400 transition-transform">
                                             {expandedProjects.has(project.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                         </button>
@@ -692,7 +757,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                     </div>
                 </div>
+
             </div>
-        </aside>
+
+            <ConfirmDialog
+                isOpen={showMergeConfirm}
+                title="Merge Projects"
+                message={`Are you sure you want to merge these ${selectedProjectIds.size} projects? All notes from the selected projects will be moved to the oldest project, and the other projects will be deleted.`}
+                confirmLabel="Merge"
+                onConfirm={() => {
+                    onMergeProjects?.(Array.from(selectedProjectIds));
+                    setIsMergeMode(false);
+                    setSelectedProjectIds(new Set());
+                    setShowMergeConfirm(false);
+                }}
+                onCancel={() => setShowMergeConfirm(false)}
+                variant="info"
+            />
+        </aside >
     );
 };

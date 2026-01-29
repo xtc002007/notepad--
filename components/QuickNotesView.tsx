@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Note, NoteType, SearchOptions } from '../types';
-import { Zap, Plus, X, Calendar, Pencil, Eye, Search, ChevronDown, ChevronRight, CaseSensitive, WholeWord, ChevronUp, Copy, Check, Pin } from 'lucide-react';
+import { Zap, Plus, X, Calendar, Pencil, Eye, Search, ChevronDown, ChevronRight, CaseSensitive, WholeWord, ChevronUp, Copy, Check, Pin, Merge } from 'lucide-react';
 import { ContextMenu } from './ContextMenu';
+import { ConfirmDialog } from './ConfirmDialog';
 import { format } from 'date-fns';
 import { storage } from '../storage';
 
@@ -26,6 +27,7 @@ interface QuickNotesViewProps {
     onTogglePin?: (noteId: string) => void;
     initialScrollPosition?: number;
     onUpdateScrollPosition?: (pos: number) => void;
+    onMergeNotes?: (noteIds: string[]) => void;
 }
 
 // --- Helper: Highlight logic ---
@@ -391,11 +393,12 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
     previewNoteIds = [],
     onTogglePreview,
     highlightNoteId,
-    searchQuery: globalSearchQuery,
+    globalSearchQuery,
     onTouchNote,
     onTogglePin,
     initialScrollPosition = 0,
-    onUpdateScrollPosition
+    onUpdateScrollPosition,
+    onMergeNotes
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [newContent, setNewContent] = useState('');
@@ -404,6 +407,11 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
     const [searchOptions, setSearchOptions] = useState<SearchOptions>({ caseSensitive: false, wholeWord: false });
     const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, isPreview: boolean, noteId?: string } | null>(null);
+
+    // Merge Mode State
+    const [isMergeMode, setIsMergeMode] = useState(false);
+    const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
+    const [showMergeConfirm, setShowMergeConfirm] = useState(false);
 
 
     // Sync with global search query when it changes
@@ -416,6 +424,47 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
             setLocalSearchQuery('');
         }
     }, [globalSearchQuery]);
+
+    // Scroll Persistence
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const scrollTimeoutRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (scrollContainerRef.current) {
+            const timer = setTimeout(() => {
+                if (scrollContainerRef.current) {
+                    scrollContainerRef.current.scrollTop = initialScrollPosition || 0;
+                }
+            }, 50);
+            return () => clearTimeout(timer);
+        }
+    }, [initialScrollPosition]); // Changed dependency to initialScrollPosition to separate from notes updates if needed, though usually notes load triggers it. Actually, notes dependency is safer for initial load.
+
+    // We also want to restore when 'notes' change (project switch)
+    useEffect(() => {
+        if (scrollContainerRef.current) {
+            // We rely on MainApp passing the correct initialScrollPosition for the ACTIVE project.
+            // So when prop changes, we update.
+            // But we only want to set it ONCE when the project (notes) changes.
+            // Actually, initialScrollPosition will change when project changes.
+            const timer = setTimeout(() => {
+                if (scrollContainerRef.current) {
+                    scrollContainerRef.current.scrollTop = initialScrollPosition || 0;
+                }
+            }, 50);
+            return () => clearTimeout(timer);
+        }
+    }, [initialScrollPosition, notes]);
+
+
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        if (!onUpdateScrollPosition) return;
+        const top = e.currentTarget.scrollTop;
+        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => {
+            onUpdateScrollPosition(top);
+        }, 500);
+    };
 
     const filteredNotes = React.useMemo(() => {
         if (!localSearchQuery) return notes;
@@ -600,6 +649,35 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                     >
                         <Plus size={20} />
                     </button>
+
+                    {!isMergeMode ? (
+                        <button
+                            onClick={() => { setIsMergeMode(true); setSelectedNoteIds(new Set()); }}
+                            className="p-2 rounded-md transition-all text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-slate-800"
+                            title="Merge Notes"
+                        >
+                            <Merge size={18} />
+                        </button>
+
+
+                    ) : (
+                        <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
+                            <button
+                                onClick={() => { setIsMergeMode(false); setSelectedNoteIds(new Set()); }}
+                                className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => setShowMergeConfirm(true)}
+                                disabled={selectedNoteIds.size < 2}
+                                className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                            >
+                                <Merge size={14} /> Merge ({selectedNoteIds.size})
+                            </button>
+                        </div>
+                    )}
+
                     <div className="flex items-center gap-1 border-l border-gray-100 dark:border-slate-800 pl-4 ml-2">
                         {!isSearchVisible ? (
                             <button onClick={toggleSearch} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-colors" title="Find in notes (Ctrl+F)">
@@ -641,44 +719,46 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                         )}
                     </div>
                 </div>
-            </header>
+            </header >
 
             {/* Add Modal */}
-            {isAdding && (
-                <div className="absolute inset-0 z-50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm flex items-start justify-center pt-20 animate-in fade-in duration-200">
-                    <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-800 p-6 mx-4">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-semibold text-gray-800 dark:text-white">New Quick Note</h3>
-                            <button onClick={() => setIsAdding(false)} className="p-2 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <textarea
-                            autoFocus
-                            value={newContent}
-                            onChange={(e) => setNewContent(e.target.value)}
-                            placeholder="Type your thought here..."
-                            className="w-full h-40 p-4 text-base border border-gray-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-gray-200 mb-4"
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave();
-                            }}
-                        />
-                        <div className="flex justify-between items-center">
-                            <span className="text-xs text-gray-400 dark:text-slate-500">Ctrl/Cmd + Enter to save</span>
-                            <div className="flex gap-3">
-                                <button onClick={() => setIsAdding(false)} className="px-4 py-2 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">Cancel</button>
-                                <button
-                                    onClick={handleSave}
-                                    disabled={!newContent.trim()}
-                                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md font-medium text-sm transition-all disabled:opacity-50"
-                                >
-                                    Save Note
+            {
+                isAdding && (
+                    <div className="absolute inset-0 z-50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm flex items-start justify-center pt-20 animate-in fade-in duration-200">
+                        <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-800 p-6 mx-4">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-semibold text-gray-800 dark:text-white">New Quick Note</h3>
+                                <button onClick={() => setIsAdding(false)} className="p-2 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+                                    <X size={20} />
                                 </button>
+                            </div>
+                            <textarea
+                                autoFocus
+                                value={newContent}
+                                onChange={(e) => setNewContent(e.target.value)}
+                                placeholder="Type your thought here..."
+                                className="w-full h-40 p-4 text-base border border-gray-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-gray-200 mb-4"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave();
+                                }}
+                            />
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-400 dark:text-slate-500">Ctrl/Cmd + Enter to save</span>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setIsAdding(false)} className="px-4 py-2 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+                                    <button
+                                        onClick={handleSave}
+                                        disabled={!newContent.trim()}
+                                        className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md font-medium text-sm transition-all disabled:opacity-50"
+                                    >
+                                        Save Note
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* List */}
             <div
@@ -701,10 +781,31 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                         <div
                             key={note.id}
                             ref={el => { noteRefs.current[note.id] = el; }}
-                            className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl p-0 shadow-sm hover:shadow-md transition-all duration-200 group overflow-hidden"
+                            className={`bg-white dark:bg-slate-900 border ${isMergeMode && selectedNoteIds.has(note.id) ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-100 dark:border-slate-800'} rounded-xl p-0 shadow-sm hover:shadow-md transition-all duration-200 group overflow-hidden relative`}
+                            onClick={(e) => {
+                                if (isMergeMode) {
+                                    e.stopPropagation(); // Prevent other interactions?
+                                    const newSet = new Set(selectedNoteIds);
+                                    if (newSet.has(note.id)) newSet.delete(note.id);
+                                    else newSet.add(note.id);
+                                    setSelectedNoteIds(newSet);
+                                }
+                            }}
                         >
+                            {/* Merge Checkbox Overlay */}
+                            {isMergeMode && (
+                                <div className="absolute left-0 top-0 bottom-0 w-8 z-20 flex items-center justify-center bg-gray-50/50 dark:bg-slate-900/50 backdrop-blur-[1px] border-r border-gray-100 dark:border-slate-800">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedNoteIds.has(note.id)}
+                                        onChange={() => { }} // Handled by parent click
+                                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                                    />
+                                </div>
+                            )}
+
                             {/* Note Toolbar */}
-                            <div className="px-4 py-1.5 border-b border-gray-50 dark:border-slate-800 flex justify-between items-center bg-gray-50/30 dark:bg-slate-900/30">
+                            <div className={`px-4 py-1.5 border-b border-gray-50 dark:border-slate-800 flex justify-between items-center bg-gray-50/30 dark:bg-slate-900/30 ${isMergeMode ? 'pl-10' : ''}`}>
                                 <div className="flex items-center text-[10px] font-medium text-gray-400 dark:text-slate-500 gap-2">
                                     <Calendar size={12} />
                                     <span>{format(note.createdAt, 'MMM d, HH:mm')}</span>
@@ -749,7 +850,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                                 </div>
                             </div>
 
-                            <div className="p-0">
+                            <div className={`p-0 ${isMergeMode ? 'pl-8 opacity-80' : ''}`}>
                                 {isCollapsed ? (
                                     <div className="px-4 py-3 text-sm text-gray-400 italic truncate overflow-hidden">
                                         {note.content.substring(0, 100) || "Empty note..."}
@@ -809,15 +910,40 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                 })}
             </div>
 
-            {contextMenu && (
-                <ContextMenu
-                    x={contextMenu.x}
-                    y={contextMenu.y}
-                    onCopy={handleCopySelection}
-                    onClose={() => setContextMenu(null)}
-                />
-            )}
-        </div>
+            {
+                contextMenu && (
+                    <ContextMenu
+                        x={contextMenu.x}
+                        y={contextMenu.y}
+                        onCopy={handleCopySelection}
+                        onClose={() => setContextMenu(null)}
+                    />
+                )
+            }
+
+            {/* Merge Confirm Dialog */}
+            <ConfirmDialog
+                isOpen={showMergeConfirm}
+                title="Merge Notes"
+                message={`Are you sure you want to merge these ${selectedNoteIds.size} notes? They will be combined into a single note and the originals will be deleted. The oldest note will be preserved as the base.`}
+                confirmLabel="Merge"
+                onConfirm={() => {
+                    onMergeNotes?.(Array.from(selectedNoteIds));
+                    setIsMergeMode(false);
+                    setSelectedNoteIds(new Set());
+                    setShowMergeConfirm(false);
+                    // Force scroll to top after merge, overriding potential scroll restoration
+                    setTimeout(() => {
+                        if (scrollContainerRef.current) {
+                            scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                            onUpdateScrollPosition?.(0);
+                        }
+                    }, 100);
+                }}
+                onCancel={() => setShowMergeConfirm(false)}
+                variant="info"
+            />
+        </div >
 
     );
 };

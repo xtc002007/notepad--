@@ -325,11 +325,131 @@ const MainApp: React.FC = () => {
     }
   };
 
+  const handleMergeProjects = (projectIds: string[]) => {
+    if (projectIds.length < 2) return;
+
+    const targetProjects = projects.filter(p => projectIds.includes(p.id));
+    if (targetProjects.length < 2) return;
+
+    // Sort by updatedAt assuming older projects might have smaller update times, 
+    // or just rely on 'First Selected' if we can't determine age. 
+    // Let's use updatedAt ascending as a stable sort for "creation-ish" order.
+    const sortedProjects = [...targetProjects].sort((a, b) => a.updatedAt - b.updatedAt);
+
+    const baseProject = sortedProjects[0];
+    const sourceProjects = sortedProjects.slice(1);
+    const sourceIds = sourceProjects.map(p => p.id);
+
+    // Notes belonging to source projects
+    const affectedNotes = notes.filter(n => sourceIds.includes(n.projectId));
+
+    // Update local state
+    setNotes(prev => prev.map(n => {
+      if (sourceIds.includes(n.projectId)) {
+        return { ...n, projectId: baseProject.id, updatedAt: Date.now() };
+      }
+      return n;
+    }));
+
+    setProjects(prev => prev.filter(p => !sourceIds.includes(p.id)));
+
+    // Persist changes
+    // 1. Update notes to new project
+    affectedNotes.forEach(n => {
+      const updated = { ...n, projectId: baseProject.id, updatedAt: Date.now() };
+      storage.saveNote(updated);
+    });
+
+    // 2. Delete old projects
+    // Wait slightly to ensure notes are saved? No, JS is async but sequential enough here
+    // However, storage.deleteProject deletes notes in the project!
+    // We MUST ensure the notes are NOT deleted.
+    // The previous analysis says updating projectId first removes them from the delete query scope.
+    // So `storage.saveNote` updates the DB row.
+    // We need to wait for saveNote to finish potentially? 
+    // storage.saveNote is async. We should probably await if we were in an async function.
+    // But handleMergeProjects is not async here. 
+    // We can fire and forget, but there is a race condition risk if deleteProject runs before saveNote.
+    // Let's make handleMergeProjects async or just chain promises.
+
+    Promise.all(affectedNotes.map(n => {
+      const updated = { ...n, projectId: baseProject.id, updatedAt: Date.now() };
+      return storage.saveNote(updated);
+    })).then(() => {
+      sourceIds.forEach(id => storage.deleteProject(id));
+    });
+
+    // If active project was deleted, switch to base
+    if (activeProjectId && sourceIds.includes(activeProjectId)) {
+      setActiveProjectId(baseProject.id);
+      setUserHabits(prev => ({ ...prev, lastActiveProjectId: baseProject.id }));
+    }
+  };
+
+  const handleMergeNotes = (noteIds: string[]) => {
+    if (noteIds.length < 2) return;
+
+    const notesToMerge = notes.filter(n => noteIds.includes(n.id));
+    if (notesToMerge.length < 2) return;
+
+    // Sort by createdAt ascending (oldest first) so content flows chronologically
+    const sortedNotes = [...notesToMerge].sort((a, b) => a.createdAt - b.createdAt);
+
+    // Use the oldest note as the base to preserve history start
+    const baseNote = sortedNotes[0];
+    const otherNotes = sortedNotes.slice(1);
+
+    // Combine content
+    const combinedContent = sortedNotes
+      .map(n => n.content.trim())
+      .join('\n\n---\n\n');
+
+    const updatedBaseNote: Note = {
+      ...baseNote,
+      content: combinedContent,
+      updatedAt: Date.now(),
+      // If any note was pinned, keep the merged note pinned? Or just respect base? 
+      // Let's respect base for now, simple.
+    };
+
+    const otherIds = otherNotes.map(n => n.id);
+
+    // Update UI & Storage
+    setNotes(prev => {
+      const remaining = prev.filter(n => !otherIds.includes(n.id));
+      return remaining.map(n => n.id === baseNote.id ? updatedBaseNote : n);
+    });
+
+    storage.saveNote(updatedBaseNote);
+    otherIds.forEach(id => storage.deleteNote(id));
+
+    // Reset active if we deleted the active note
+    if (activeNoteId && otherIds.includes(activeNoteId)) {
+      setActiveNoteId(baseNote.id);
+      setUserHabits(prev => ({ ...prev, lastActiveNoteId: baseNote.id }));
+    }
+  };
+
   const handleNavigate = (type: 'project' | 'note', id: string, searchQuery?: string) => {
+    const now = Date.now();
+
     if (type === 'project') {
       const projectId = id;
       setActiveProjectId(projectId);
       setNavigatedSearchQuery(searchQuery || '');
+
+      // Update Project Timestamp to bump to top
+      if (projectId !== 'quick_notes' && projectId !== 'uncategorized') {
+        setProjects(prev => {
+          const p = prev.find(p => p.id === projectId);
+          if (p) {
+            const updated = { ...p, updatedAt: now };
+            storage.saveProject(updated);
+            return prev.map(item => item.id === projectId ? updated : item);
+          }
+          return prev;
+        });
+      }
 
       // Restore last active note for this project or default to first
       const lastNoteId = userHabits.projectLastNoteIds[projectId];
@@ -340,7 +460,7 @@ const MainApp: React.FC = () => {
         noteToOpen = lastNoteId;
       } else if (projectNotes.length > 0) {
         // Sort to get most recent if no memory
-        const sorted = [...projectNotes].sort((a, b) => b.updatedAt - a.updatedAt);
+        const sorted = [...projectNotes].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
         noteToOpen = sorted[0].id;
       }
 
@@ -359,6 +479,32 @@ const MainApp: React.FC = () => {
       const note = notes.find(n => n.id === noteId);
       if (note) {
         const pid = note.projectId === 'uncategorized' ? null : note.projectId;
+
+        // Update Note Timestamp
+        const updatedNote = { ...note, updatedAt: now };
+
+        // Update Notes State and Sort to ensure it bubbles to top
+        setNotes(prev => {
+          const others = prev.filter(n => n.id !== noteId);
+          // Sort entire list to keep consistency
+          const newList = [updatedNote, ...others].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+          return newList;
+        });
+        storage.saveNote(updatedNote);
+
+        // Update Project Timestamp
+        if (pid && pid !== 'quick_notes') {
+          setProjects(prev => {
+            const p = prev.find(proj => proj.id === pid);
+            if (p) {
+              const updatedP = { ...p, updatedAt: now };
+              storage.saveProject(updatedP);
+              return prev.map(item => item.id === pid ? updatedP : item);
+            }
+            return prev;
+          });
+        }
+
         setActiveProjectId(pid);
         setActiveNoteId(noteId);
         setNavigatedSearchQuery(searchQuery || '');
@@ -453,7 +599,9 @@ const MainApp: React.FC = () => {
           activeNoteId={activeNoteId}
           onSelectProject={handleNavigate}
           onAddProject={handleAddProject}
+
           onRenameProject={handleRenameProject}
+          onMergeProjects={handleMergeProjects}
           onDeleteProject={handleDeleteProject}
           onAddNote={handleAddNote}
           onRenameNote={handleRenameNote}
@@ -503,6 +651,7 @@ const MainApp: React.FC = () => {
                 ...prev,
                 projectScrollPositions: { ...prev.projectScrollPositions, [`${activeProjectId}_list`]: pos }
               }))}
+              onMergeNotes={handleMergeNotes}
             />
           ) : (
             <Workspace
