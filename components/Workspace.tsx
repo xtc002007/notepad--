@@ -9,6 +9,8 @@ import { Project, Note, NoteType, SearchOptions, AppSettings } from '../types';
 import { File as FileIcon, Search, CaseSensitive, WholeWord, X, ChevronDown, ChevronUp, FileText, Code, Eye, Pencil, ImageIcon } from 'lucide-react';
 import { ContextMenu } from './ContextMenu';
 import { storage } from '../storage';
+import { llmService } from '../services/llm';
+import { Sparkles, Loader2, Info, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from 'lucide-react';
 
 
 interface WorkspaceProps {
@@ -20,6 +22,9 @@ interface WorkspaceProps {
     onRenameProject: (projectId: string, newName: string) => void;
     onRenameNote: (noteId: string, newTitle: string) => void;
     onUpdateNoteContent: (noteId: string, newContent: string) => void;
+    onUpdateNote: (noteId: string, updates: Partial<Note>) => void;
+    onNavigate: (type: 'project' | 'note', id: string) => void;
+    onNotesReorder: (noteIds: string[]) => void;
     highlightNoteId?: string;
     settings: AppSettings;
     viewMode: 'raw' | 'markdown';
@@ -280,6 +285,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     onRenameProject,
     onRenameNote,
     onUpdateNoteContent,
+    onUpdateNote,
+    onNavigate,
+    onNotesReorder,
     highlightNoteId,
     settings,
     viewMode,
@@ -293,7 +301,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
 
-
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
@@ -301,7 +308,76 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     const projectInputRef = useRef<HTMLInputElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
 
+    const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
+
     const activeNote = useMemo(() => notes.find(n => n.id === activeNoteId) || null, [notes, activeNoteId]);
+
+    const orderedNotes = useMemo(() => {
+        if (!project) return notes;
+        const order = project.noteOrder || [];
+        const sorted = [...notes].sort((a, b) => {
+            const indexA = order.indexOf(a.id);
+            const indexB = order.indexOf(b.id);
+            if (indexA === -1 && indexB === -1) return (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt);
+            if (indexA === -1) return 1;
+            if (indexB === -1) return -1;
+            return indexA - indexB;
+        });
+        return sorted;
+    }, [notes, project]);
+
+    const handleDragStart = (id: string) => setDraggedNoteId(id);
+    const handleDragOver = (e: React.DragEvent, id: string) => {
+        e.preventDefault();
+        if (!draggedNoteId || draggedNoteId === id) return;
+        const items = [...orderedNotes.map(n => n.id)];
+        const oldIndex = items.indexOf(draggedNoteId);
+        const newIndex = items.indexOf(id);
+        items.splice(oldIndex, 1);
+        items.splice(newIndex, 0, draggedNoteId);
+        onNotesReorder(items);
+    };
+
+    const [isSummarizing, setIsSummarizing] = useState(false);
+    const [showAISummary, setShowAISummary] = useState(true);
+
+    const handleSummarize = async () => {
+        if (!activeNote || isSummarizing) return;
+        setIsSummarizing(true);
+        try {
+            const prompt = `Please provide a summary and key information for the following note content in Chinese (Simplified). 
+            Format your response as a JSON object with two fields: "summary" and "keyInfo". 
+            The "summary" should be a concise 1-2 sentence overview.
+            The "keyInfo" should be 3-5 short bullet points of the most important facts.
+            
+            Content:
+            ${activeNote.content}`;
+
+            const result = await llmService.chat({
+                messages: [{ role: 'user', content: prompt }]
+            });
+
+            const message = result.choices[0].message.content;
+
+            let parsed;
+            try {
+                const jsonStr = message.replace(/```json\n?|\n?```/g, '').trim();
+                parsed = JSON.parse(jsonStr);
+            } catch (e) {
+                parsed = { summary: message, keyInfo: "无法提取关键点" };
+            }
+
+            onUpdateNote(activeNote.id, {
+                aiSummary: parsed.summary,
+                aiKeyInfo: typeof parsed.keyInfo === 'string' ? parsed.keyInfo : (Array.isArray(parsed.keyInfo) ? parsed.keyInfo.join('\n') : JSON.stringify(parsed.keyInfo))
+            });
+        } catch (error) {
+            console.error('Summarization failed:', error);
+            alert('AI 总结失败，请检查 API 配置');
+        } finally {
+            setIsSummarizing(false);
+        }
+    };
 
     useEffect(() => {
         if (initialSearchQuery) {
@@ -576,10 +652,139 @@ export const Workspace: React.FC<WorkspaceProps> = ({
 
     if (!activeNote) {
         return (
-            <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 dark:bg-slate-950 text-gray-400 dark:text-slate-600">
-                <FileText size={64} className="mb-4 opacity-20" />
-                <p>Select a file from the explorer to view</p>
-            </div>
+            <main className="flex-1 flex flex-col min-w-0 bg-[#f8fafc] dark:bg-[#0f172a] overflow-hidden font-sans relative">
+                {/* Decorative Background Elements */}
+                <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-blue-50/50 to-transparent dark:from-blue-950/20 dark:to-transparent pointer-events-none" />
+                <div className="absolute top-[-10%] right-[-5%] w-[40%] h-[40%] bg-blue-400/5 dark:bg-blue-600/5 rounded-full blur-[120px] pointer-events-none" />
+                <div className="absolute bottom-[-10%] left-[-5%] w-[30%] h-[30%] bg-indigo-400/5 dark:bg-indigo-600/5 rounded-full blur-[100px] pointer-events-none" />
+
+                <header className="h-14 border-b border-gray-200/60 dark:border-slate-800/60 flex items-center justify-between px-8 shrink-0 bg-white/70 dark:bg-slate-950/70 backdrop-blur-xl z-20 sticky top-0">
+                    <div className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-slate-400">
+                        <span className="hover:text-blue-600 cursor-pointer transition-colors">Workspace</span>
+                        <span className="text-gray-300 dark:text-slate-700">/</span>
+                        <span className="text-gray-900 dark:text-white font-bold">{project?.name || '所有笔记'}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <div className="h-6 w-px bg-gray-200 dark:bg-slate-800 mx-2" />
+                        <button
+                            onClick={() => onAddNote('', NoteType.TEXT)}
+                            className="flex items-center gap-2 px-4 py-1.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg text-[11px] font-black uppercase tracking-wider hover:opacity-90 transition-all active:scale-95"
+                        >
+                            <X size={12} strokeWidth={3} />
+                            New Note
+                        </button>
+                    </div>
+                </header>
+
+                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative z-10">
+                    <div className="max-w-5xl mx-auto">
+                        {/* Hero Section */}
+                        <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+                            <div className="space-y-1">
+                                <h1 className="text-xl font-bold text-gray-950 dark:text-white tracking-tight">
+                                    {project?.name || 'Welcome'}
+                                </h1>
+                                <p className="text-gray-500 dark:text-slate-400 text-xs font-medium leading-relaxed">
+                                    整理并管理您的知识库记录。此项目共包含 <span className="text-blue-600 dark:text-blue-400 font-bold">{notes.length}</span> 篇高价值笔记。
+                                </p>
+                            </div>
+
+                            <div className="flex items-center gap-4 bg-white/50 dark:bg-slate-900/40 p-1.5 rounded-xl border border-gray-100 dark:border-slate-800/50 shadow-sm backdrop-blur-md shrink-0">
+                                <div className="px-4 py-1 text-center border-r border-gray-100 dark:border-slate-800/50">
+                                    <div className="text-lg font-bold text-gray-900 dark:text-white leading-tight">{notes.length}</div>
+                                    <div className="text-[9px] text-gray-400 uppercase font-bold tracking-widest">Files</div>
+                                </div>
+                                <div className="px-4 py-1 text-center">
+                                    <div className="text-lg font-bold text-blue-600 dark:text-blue-400 leading-tight">{notes.filter(n => n.isPinned).length}</div>
+                                    <div className="text-[9px] text-gray-400 uppercase font-bold tracking-widest">Pinned</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* List View */}
+                        <div className="flex flex-col gap-5 mb-20">
+                            {orderedNotes.map((note) => (
+                                <div
+                                    key={note.id}
+                                    draggable
+                                    onDragStart={() => handleDragStart(note.id)}
+                                    onDragOver={(e) => handleDragOver(e, note.id)}
+                                    onDragEnd={() => setDraggedNoteId(null)}
+                                    onClick={() => onNavigate('note', note.id)}
+                                    className={`group bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800/80 rounded-2xl p-6 shadow-sm hover:shadow-xl hover:border-blue-300 dark:hover:border-blue-900/50 transition-all duration-300 cursor-pointer relative overflow-hidden ${draggedNoteId === note.id ? 'opacity-40 scale-[0.98] border-blue-500 border-2 shadow-2xl' : ''}`}
+                                >
+                                    {/* Icon + Title on same line */}
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className="p-1.5 bg-blue-50 dark:bg-blue-900/40 rounded-lg text-blue-500 dark:text-blue-400 shrink-0 group-hover:bg-blue-100 dark:group-hover:bg-blue-800/60 transition-colors">
+                                            {note.type === NoteType.TEXT ? <FileText size={16} strokeWidth={2.5} /> : <ImageIcon size={16} strokeWidth={2.5} />}
+                                        </div>
+                                        <h3 className="text-[14px] font-bold text-gray-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex-1">
+                                            {note.title || '无标题笔记'}
+                                        </h3>
+                                        <div className="flex items-center gap-2">
+                                            {note.isPinned && (
+                                                <div className="px-2 py-0.5 bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 text-[10px] font-black rounded-lg border border-amber-100 dark:border-amber-800/50 uppercase tracking-tighter shadow-sm">
+                                                    PINNED
+                                                </div>
+                                            )}
+                                            <div className="cursor-grab active:cursor-grabbing p-1.5 opacity-0 group-hover:opacity-100 bg-gray-50 dark:bg-slate-800 rounded-lg transition-all duration-300">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300">
+                                                    <circle cx="9" cy="5" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="19" r="1" />
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Content/Summary */}
+                                    <div className="pl-11">
+                                        {note.aiSummary ? (
+                                            <div className="bg-blue-50/10 dark:bg-blue-900/5 p-3 rounded-lg border border-blue-50/30 dark:border-blue-900/20 relative mb-3">
+                                                <p className="text-[12px] text-gray-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                                                    <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 font-bold text-[9px] uppercase tracking-wider mr-1.5">
+                                                        <Sparkles size={10} fill="currentColor" /> AI 摘要:
+                                                    </span>
+                                                    {note.aiSummary}
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-gray-400 dark:text-slate-500 italic mb-3">
+                                                点击进入记录，让 AI 为您生成智能摘要...
+                                            </p>
+                                        )}
+
+                                        <div className="flex items-center justify-between text-[11px] text-gray-400 font-bold uppercase tracking-widest pt-2 border-t border-gray-50 dark:border-slate-800/50">
+                                            <span className="flex items-center gap-1.5">
+                                                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" />
+                                                {new Date(note.updatedAt || note.createdAt).toLocaleDateString()}
+                                            </span>
+                                            <div className="flex items-center gap-1 text-blue-600 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-all font-black">
+                                                VIEW NOTE <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Empty State */}
+                            {notes.length === 0 && (
+                                <div className="py-20 flex flex-col items-center justify-center text-center rounded-2xl border-2 border-dashed border-gray-100 dark:border-slate-800/50 bg-white/30 dark:bg-slate-900/10 backdrop-blur-sm">
+                                    <div className="p-4 bg-white dark:bg-slate-800 rounded-xl shadow-lg shadow-blue-500/5 border border-gray-100 dark:border-slate-700 mb-4">
+                                        <FileText size={32} className="text-blue-500" strokeWidth={1.5} />
+                                    </div>
+                                    <h2 className="text-sm font-bold text-gray-900 dark:text-white mb-1">这里的笔记库空空如也</h2>
+                                    <button
+                                        onClick={() => onAddNote('', NoteType.TEXT)}
+                                        className="px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-gray-950 rounded-xl text-[11px] font-bold shadow-md hover:opacity-90 transition-all flex items-center gap-1.5"
+                                    >
+                                        <X size={14} className="rotate-45" />
+                                        创建第一篇笔记
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </main>
         );
     }
 
@@ -681,6 +886,79 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                     )}
                 </div>
             </header>
+
+            {/* AI Summary Block */}
+            <div className="bg-white dark:bg-slate-950 px-6 py-4 transition-all">
+                {!activeNote.aiSummary ? (
+                    <div className="flex justify-center py-2">
+                        <button
+                            onClick={handleSummarize}
+                            disabled={isSummarizing}
+                            className="flex items-center gap-3 px-10 py-4 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-2xl text-base font-bold shadow-xl shadow-blue-500/25 transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed group"
+                        >
+                            {isSummarizing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} className="group-hover:rotate-12 transition-transform" />}
+                            AI 智能辅助总结
+                        </button>
+                    </div>
+                ) : (
+                    <div
+                        className="rounded-2xl border border-blue-100 dark:border-blue-900/30 p-1 shadow-sm overflow-hidden text-left mx-4 mb-4"
+                        style={{ backgroundColor: '#ecf5ff' }}
+                    >
+                        <div
+                            className="flex items-center justify-between px-4 py-2.5 cursor-pointer rounded-t-xl hover:bg-blue-100/50 transition-colors"
+                            onClick={() => setShowAISummary(!showAISummary)}
+                        >
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-1 px-2 bg-blue-500 text-white rounded-lg shadow-sm shadow-blue-500/30 shrink-0">
+                                    <Sparkles size={14} />
+                                </div>
+                                <span className="text-xs text-gray-400">.笔记摘要</span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); handleSummarize(); }}
+                                    className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1.5 transition-colors"
+                                    title="重新生成"
+                                >
+                                    {isSummarizing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                                    重新生成
+                                </button>
+                                <div className="w-px h-3 bg-blue-200/50" />
+                                {showAISummary ? <ChevronUpIcon size={16} className="text-blue-400" /> : <ChevronDownIcon size={16} className="text-blue-400" />}
+                            </div>
+                        </div>
+
+                        {showAISummary && (
+                            <div className="px-5 pb-6 pt-2 flex flex-col gap-5 w-full">
+                                <div className="w-full">
+                                    <div className="text-[15px] text-red-600 font-bold mb-1.5 pl-1">
+                                        核心摘要
+                                    </div>
+                                    <div className="space-y-3 w-full pr-4 text-[15px] text-gray-800 leading-relaxed font-medium pl-1">
+                                        {activeNote.aiSummary}<br />
+                                    </div>
+                                </div>
+                                <div className="w-full">
+                                    <div className="text-[15px] text-red-600 font-bold mb-1.5 pl-1">
+                                        关键信息提炼
+                                    </div>
+                                    <div className="space-y-3 w-full pr-4">
+                                        {activeNote.aiKeyInfo?.split('\n').filter(l => l.trim()).map((line, idx) => (
+                                            <div key={idx} className="text-[15px] text-gray-800 w-full pl-1">
+                                                <span className="font-semibold text-gray-600 mr-2">{idx + 1}.</span>
+                                                <span className="leading-relaxed">{line.replace(/^[-\*\s]+/, '')}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            <div className="h-4 bg-white dark:bg-slate-950 shrink-0" /> {/* Spacer between Summary and Editor */}
 
             <div className="flex-1 overflow-hidden relative group/editor flex">
                 {viewMode === 'raw' && settings.showLineNumbers && (

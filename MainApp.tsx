@@ -259,11 +259,27 @@ const MainApp: React.FC = () => {
   const handleUpdateNoteContent = (noteId: string, newContent: string) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
-      // Don't update updatedAt here to avoid re-sorting while user is typing which causes focus loss.
-      // We rely on handleTouchNote (triggered by onFocus) to bring it to top.
       const updatedNote = { ...note, content: newContent };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
       storage.saveNote(updatedNote);
+    }
+  };
+
+  const handleUpdateNote = (noteId: string, updates: Partial<Note>) => {
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+      const updatedNote = { ...note, ...updates };
+      setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
+      storage.saveNote(updatedNote);
+    }
+  };
+
+  const handleNotesReorder = (projectId: string, noteIds: string[]) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project) {
+      const updatedProject = { ...project, noteOrder: noteIds, updatedAt: Date.now() };
+      setProjects(prev => prev.map(p => p.id === projectId ? updatedProject : p));
+      storage.saveProject(updatedProject);
     }
   };
 
@@ -451,17 +467,16 @@ const MainApp: React.FC = () => {
         });
       }
 
-      // Restore last active note for this project or default to first
-      const lastNoteId = userHabits.projectLastNoteIds[projectId];
-      const projectNotes = notes.filter(n => n.projectId === projectId);
+      // In project view mode 'detail', we no longer auto-open the first note.
+      // Instead, we show the project dashboard (activeNoteId = null).
+      const viewMode = userHabits.projectViewModes[id] || 'detail';
 
       let noteToOpen = null;
-      if (lastNoteId && projectNotes.some(n => n.id === lastNoteId)) {
-        noteToOpen = lastNoteId;
-      } else if (projectNotes.length > 0) {
-        // Sort to get most recent if no memory
-        const sorted = [...projectNotes].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-        noteToOpen = sorted[0].id;
+      if (viewMode === 'list') {
+        // In list mode, we still need notes filtered.
+      } else {
+        // In detail mode, we want a project overview if no note is explicitly selected.
+        noteToOpen = null;
       }
 
       setActiveNoteId(noteToOpen);
@@ -471,7 +486,6 @@ const MainApp: React.FC = () => {
         ...prev,
         lastActiveProjectId: projectId,
         lastActiveNoteId: noteToOpen,
-        projectLastNoteIds: noteToOpen ? { ...prev.projectLastNoteIds, [projectId]: noteToOpen } : prev.projectLastNoteIds,
         expandedProjectIds: prev.expandedProjectIds.includes(projectId) ? prev.expandedProjectIds : [...prev.expandedProjectIds, projectId]
       }));
     } else { // type === 'note'
@@ -663,6 +677,9 @@ const MainApp: React.FC = () => {
               onRenameProject={handleRenameProject}
               onRenameNote={handleRenameNote}
               onUpdateNoteContent={handleUpdateNoteContent}
+              onUpdateNote={handleUpdateNote}
+              onNavigate={handleNavigate}
+              onNotesReorder={(ids) => activeProjectId && handleNotesReorder(activeProjectId, ids)}
               highlightNoteId={highlightNoteId}
               settings={settings}
               viewMode={userHabits.editorViewMode}

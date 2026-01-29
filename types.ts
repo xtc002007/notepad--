@@ -16,6 +16,7 @@ export interface Project {
   id: string;
   name: string;
   updatedAt: number; // Timestamp for sorting
+  noteOrder?: string[]; // IDs of notes in specific order
 }
 
 export enum NoteType {
@@ -33,6 +34,8 @@ export interface Note {
   createdAt: number;
   updatedAt?: number; // Last modified/interacted timestamp
   isPinned?: boolean;
+  aiSummary?: string;
+  aiKeyInfo?: string;
 }
 
 export interface SearchResultItem {
@@ -66,6 +69,10 @@ export interface AppSettings {
   wordWrap: boolean;
   highlightActiveLine: boolean;
 
+  // LLM Settings
+  arkApiKey?: string;
+  arkModel?: string;
+
   // General
   reduceMotion: boolean;
 
@@ -82,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showLineNumbers: true,
   wordWrap: true,
   highlightActiveLine: true,
+  arkModel: 'doubao-seed-1-6-lite-251015',
   reduceMotion: false,
   autoBackup: false,
 };

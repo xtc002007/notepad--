@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Moon, Sun, Monitor, Trash2, Download, Type, Layout, AlignJustify, Hash, WrapText, MousePointerClick, Zap } from 'lucide-react';
+import { X, Moon, Sun, Monitor, Trash2, Download, Type, Layout, AlignJustify, Hash, WrapText, MousePointerClick, Zap, Brain } from 'lucide-react';
 import { AppSettings, Theme, AppFont } from '../types';
 
 interface SettingsModalProps {
@@ -13,7 +13,7 @@ interface SettingsModalProps {
     onExportData: () => void;
 }
 
-type SettingsTab = 'appearance' | 'editor' | 'data';
+type SettingsTab = 'appearance' | 'editor' | 'ai' | 'data';
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
     isOpen,
@@ -61,6 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
         { id: 'appearance', label: 'General & Appearance', icon: <Layout size={18} /> },
         { id: 'editor', label: 'Editor', icon: <Type size={18} /> },
+        { id: 'ai', label: 'AI (Ark)', icon: <Brain size={18} /> },
         { id: 'data', label: 'Data', icon: <Hash size={18} /> },
     ];
 
@@ -300,6 +301,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                             <Monitor size={32} className="mb-3" />
                                             <span className="font-medium">System</span>
                                         </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- AI SETTINGS --- */}
+                        {activeTab === 'ai' && (
+                            <div className="space-y-8 animate-in slide-in-from-right-4 duration-300">
+                                <div>
+                                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Ark LLM Configuration</h3>
+                                    <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">Configure access to Volcengine Ark (Doubao) API.</p>
+
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Ark API Key</label>
+                                            <input
+                                                type="password"
+                                                value={settings.arkApiKey || ''}
+                                                onChange={(e) => update('arkApiKey', e.target.value)}
+                                                placeholder="Enter your ARK_API_KEY"
+                                                className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                            />
+                                            <p className="text-xs text-gray-500 mt-2">Your API key is stored locally and never shared.</p>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Endpoint ID / Model Name</label>
+                                            <input
+                                                type="text"
+                                                value={settings.arkModel || ''}
+                                                onChange={(e) => update('arkModel', e.target.value)}
+                                                placeholder="doubao-seed-1-6-lite-251015"
+                                                className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                            />
+                                            <p className="text-xs text-gray-500 mt-2">Example: doubao-seed-1-6-lite-251015</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

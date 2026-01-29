@@ -65,7 +65,8 @@ export class SqliteStorageService implements StorageService {
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        updatedAt INTEGER NOT NULL
+        updatedAt INTEGER NOT NULL,
+        noteOrder TEXT
       );
     `);
 
@@ -78,13 +79,18 @@ export class SqliteStorageService implements StorageService {
         title TEXT,
         createdAt INTEGER NOT NULL,
         updatedAt INTEGER,
-        isPinned INTEGER
+        isPinned INTEGER,
+        aiSummary TEXT,
+        aiKeyInfo TEXT
       );
     `);
 
             // Migration: Attempt to add columns if they don't exist (for existing DBs)
             try { await this.db.execute('ALTER TABLE notes ADD COLUMN updatedAt INTEGER'); } catch (e) { /* ignore if exists */ }
             try { await this.db.execute('ALTER TABLE notes ADD COLUMN isPinned INTEGER'); } catch (e) { /* ignore if exists */ }
+            try { await this.db.execute('ALTER TABLE notes ADD COLUMN aiSummary TEXT'); } catch (e) { /* ignore if exists */ }
+            try { await this.db.execute('ALTER TABLE notes ADD COLUMN aiKeyInfo TEXT'); } catch (e) { /* ignore if exists */ }
+            try { await this.db.execute('ALTER TABLE projects ADD COLUMN noteOrder TEXT'); } catch (e) { /* ignore if exists */ }
 
             await this.db.execute(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -113,15 +119,18 @@ export class SqliteStorageService implements StorageService {
 
     async getProjects(): Promise<Project[]> {
         if (!this.db) await this.init();
-        const projects = await this.db!.select<Project[]>('SELECT * FROM projects ORDER BY updatedAt DESC');
-        return projects;
+        const raw = await this.db!.select<any[]>('SELECT * FROM projects ORDER BY updatedAt DESC');
+        return raw.map(p => ({
+            ...p,
+            noteOrder: p.noteOrder ? JSON.parse(p.noteOrder) : undefined
+        }));
     }
 
     async saveProject(p: Project): Promise<void> {
         if (!this.db) await this.init();
         await this.db!.execute(
-            'INSERT OR REPLACE INTO projects (id, name, updatedAt) VALUES ($1, $2, $3)',
-            [p.id, p.name, p.updatedAt]
+            'INSERT OR REPLACE INTO projects (id, name, updatedAt, noteOrder) VALUES ($1, $2, $3, $4)',
+            [p.id, p.name, p.updatedAt, p.noteOrder ? JSON.stringify(p.noteOrder) : null]
         );
     }
 
@@ -143,8 +152,8 @@ export class SqliteStorageService implements StorageService {
     async saveNote(n: Note): Promise<void> {
         if (!this.db) await this.init();
         await this.db!.execute(
-            'INSERT OR REPLACE INTO notes (id, projectId, type, content, title, createdAt, updatedAt, isPinned) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-            [n.id, n.projectId, n.type, n.content, n.title, n.createdAt, n.updatedAt || null, n.isPinned ? 1 : 0]
+            'INSERT OR REPLACE INTO notes (id, projectId, type, content, title, createdAt, updatedAt, isPinned, aiSummary, aiKeyInfo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+            [n.id, n.projectId, n.type, n.content, n.title, n.createdAt, n.updatedAt || null, n.isPinned ? 1 : 0, n.aiSummary || null, n.aiKeyInfo || null]
         );
     }
 
