@@ -16,6 +16,11 @@ const generateId = () => Math.random().toString(36).substring(2, 9);
 // Special ID for Quick Notes View
 const QUICK_NOTES_VIEW_ID = 'quick_notes';
 
+type LegacyUserHabits = UserHabits & {
+  collapsedQuickNoteIds?: string[];
+  previewQuickNoteIds?: string[];
+};
+
 const MainApp: React.FC = () => {
   // Loading State
   const [isDataLoaded, setIsDataLoaded] = useState(false);
@@ -56,7 +61,7 @@ const MainApp: React.FC = () => {
 
         // Migrate old keys if present
         const migrated = { ...loadedHabits };
-        const raw = loadedHabits as any;
+        const raw = loadedHabits as LegacyUserHabits;
         if (raw.collapsedQuickNoteIds && !migrated.collapsedNoteIds?.length) {
           migrated.collapsedNoteIds = raw.collapsedQuickNoteIds;
         }
@@ -65,6 +70,9 @@ const MainApp: React.FC = () => {
         }
 
         const initialActive = migrated.lastActiveProjectId || QUICK_NOTES_VIEW_ID;
+        const initialNoteId = migrated.lastActiveNoteId && loadedNotes.some(
+          note => note.id === migrated.lastActiveNoteId && note.projectId === initialActive
+        ) ? migrated.lastActiveNoteId : null;
 
         // Ensure initial active project is expanded
         if (initialActive !== QUICK_NOTES_VIEW_ID && initialActive !== 'uncategorized') {
@@ -81,7 +89,7 @@ const MainApp: React.FC = () => {
 
         // Set initial active state based on habits
         setActiveProjectId(initialActive);
-        setActiveNoteId(loadedHabits.lastActiveNoteId);
+        setActiveNoteId(initialNoteId);
       } catch (error) {
         console.error("Failed to load initial data", error);
       } finally {
@@ -93,7 +101,7 @@ const MainApp: React.FC = () => {
 
   // --- Close Handler (Auto-Backup) ---
   useEffect(() => {
-    let unlisten: any;
+    let unlisten: (() => void) | undefined;
     let isClosing = false;
 
     const setupCloseListener = async () => {
@@ -184,6 +192,12 @@ const MainApp: React.FC = () => {
     setProjects([newProject, ...projects]);
     setActiveProjectId(newProject.id);
     setActiveNoteId(null);
+    setUserHabits(prev => ({
+      ...prev,
+      lastActiveProjectId: newProject.id,
+      lastActiveNoteId: null,
+      expandedProjectIds: [...new Set([...prev.expandedProjectIds, newProject.id])]
+    }));
     storage.saveProject(newProject);
   };
 
@@ -250,7 +264,7 @@ const MainApp: React.FC = () => {
   const handleRenameNote = (noteId: string, newTitle: string) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
-      const updatedNote = { ...note, title: newTitle };
+      const updatedNote = { ...note, title: newTitle, updatedAt: Date.now() };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
       storage.saveNote(updatedNote);
     }
@@ -259,7 +273,7 @@ const MainApp: React.FC = () => {
   const handleUpdateNoteContent = (noteId: string, newContent: string) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
-      const updatedNote = { ...note, content: newContent };
+      const updatedNote = { ...note, content: newContent, updatedAt: Date.now() };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
       storage.saveNote(updatedNote);
     }
@@ -268,7 +282,7 @@ const MainApp: React.FC = () => {
   const handleUpdateNote = (noteId: string, updates: Partial<Note>) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
-      const updatedNote = { ...note, ...updates };
+      const updatedNote = { ...note, ...updates, updatedAt: updates.updatedAt ?? Date.now() };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
       storage.saveNote(updatedNote);
     }
@@ -332,16 +346,33 @@ const MainApp: React.FC = () => {
   const handleMoveNote = (noteId: string, targetProjectId: string) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
-      const updatedNote = { ...note, projectId: targetProjectId };
+      const now = Date.now();
+      const updatedNote = { ...note, projectId: targetProjectId, updatedAt: now };
       setNotes(prev => prev.map(n => n.id === noteId ? updatedNote : n));
       storage.saveNote(updatedNote);
+      if (targetProjectId !== QUICK_NOTES_VIEW_ID && targetProjectId !== 'uncategorized') {
+        setProjects(prev => prev.map(project => {
+          if (project.id !== targetProjectId) return project;
+          const updatedProject = { ...project, updatedAt: now };
+          storage.saveProject(updatedProject);
+          return updatedProject;
+        }));
+      }
       if (activeNoteId === noteId) {
-        setUserHabits(prev => ({ ...prev, lastActiveProjectId: targetProjectId }));
+        setActiveProjectId(targetProjectId);
+        setUserHabits(prev => ({
+          ...prev,
+          lastActiveProjectId: targetProjectId,
+          projectLastNoteIds: { ...prev.projectLastNoteIds, [targetProjectId]: noteId },
+          expandedProjectIds: targetProjectId !== QUICK_NOTES_VIEW_ID && !prev.expandedProjectIds.includes(targetProjectId)
+            ? [...prev.expandedProjectIds, targetProjectId]
+            : prev.expandedProjectIds
+        }));
       }
     }
   };
 
-  const handleMergeProjects = (projectIds: string[]) => {
+  const handleMergeProjects = async (projectIds: string[]) => {
     if (projectIds.length < 2) return;
 
     const targetProjects = projects.filter(p => projectIds.includes(p.id));
@@ -356,44 +387,24 @@ const MainApp: React.FC = () => {
     const sourceProjects = sortedProjects.slice(1);
     const sourceIds = sourceProjects.map(p => p.id);
 
-    // Notes belonging to source projects
+    const now = Date.now();
     const affectedNotes = notes.filter(n => sourceIds.includes(n.projectId));
+    const movedNotes = affectedNotes.map(note => ({ ...note, projectId: baseProject.id, updatedAt: now }));
 
-    // Update local state
     setNotes(prev => prev.map(n => {
-      if (sourceIds.includes(n.projectId)) {
-        return { ...n, projectId: baseProject.id, updatedAt: Date.now() };
-      }
+      const movedNote = movedNotes.find(note => note.id === n.id);
+      if (movedNote) return movedNote;
       return n;
     }));
 
     setProjects(prev => prev.filter(p => !sourceIds.includes(p.id)));
 
-    // Persist changes
-    // 1. Update notes to new project
-    affectedNotes.forEach(n => {
-      const updated = { ...n, projectId: baseProject.id, updatedAt: Date.now() };
-      storage.saveNote(updated);
-    });
-
-    // 2. Delete old projects
-    // Wait slightly to ensure notes are saved? No, JS is async but sequential enough here
-    // However, storage.deleteProject deletes notes in the project!
-    // We MUST ensure the notes are NOT deleted.
-    // The previous analysis says updating projectId first removes them from the delete query scope.
-    // So `storage.saveNote` updates the DB row.
-    // We need to wait for saveNote to finish potentially? 
-    // storage.saveNote is async. We should probably await if we were in an async function.
-    // But handleMergeProjects is not async here. 
-    // We can fire and forget, but there is a race condition risk if deleteProject runs before saveNote.
-    // Let's make handleMergeProjects async or just chain promises.
-
-    Promise.all(affectedNotes.map(n => {
-      const updated = { ...n, projectId: baseProject.id, updatedAt: Date.now() };
-      return storage.saveNote(updated);
-    })).then(() => {
-      sourceIds.forEach(id => storage.deleteProject(id));
-    });
+    try {
+      await Promise.all(movedNotes.map(note => storage.saveNote(note)));
+      await Promise.all(sourceIds.map(id => storage.deleteProject(id)));
+    } catch (error) {
+      console.error('Failed to merge projects:', error);
+    }
 
     // If active project was deleted, switch to base
     if (activeProjectId && sourceIds.includes(activeProjectId)) {
@@ -402,7 +413,7 @@ const MainApp: React.FC = () => {
     }
   };
 
-  const handleMergeNotes = (noteIds: string[]) => {
+  const handleMergeNotes = async (noteIds: string[]) => {
     if (noteIds.length < 2) return;
 
     const notesToMerge = notes.filter(n => noteIds.includes(n.id));
@@ -436,8 +447,12 @@ const MainApp: React.FC = () => {
       return remaining.map(n => n.id === baseNote.id ? updatedBaseNote : n);
     });
 
-    storage.saveNote(updatedBaseNote);
-    otherIds.forEach(id => storage.deleteNote(id));
+    try {
+      await storage.saveNote(updatedBaseNote);
+      await Promise.all(otherIds.map(id => storage.deleteNote(id)));
+    } catch (error) {
+      console.error('Failed to merge notes:', error);
+    }
 
     // Reset active if we deleted the active note
     if (activeNoteId && otherIds.includes(activeNoteId)) {

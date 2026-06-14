@@ -6,7 +6,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { format } from 'date-fns';
 import { storage } from '../storage';
 
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import TurndownService from 'turndown';
 import * as gfmPlugin from 'turndown-plugin-gfm';
@@ -73,6 +73,10 @@ const turndownService = new TurndownService({
 });
 turndownService.use(gfmPlugin.gfm);
 
+const getElementAttribute = (node: Node, attribute: string) => (
+    node instanceof Element ? node.getAttribute(attribute) || '' : ''
+);
+
 // Rule 1: STRICT CODE HANDLING
 turndownService.addRule('code', {
     filter: 'code',
@@ -88,11 +92,11 @@ turndownService.addRule('code', {
 // Rule 2: Code blocks
 turndownService.addRule('pre', {
     filter: 'pre',
-    replacement: (content, node: any) => {
+    replacement: (content, node: Node) => {
         let lang = '';
-        const className = node.getAttribute('class') || '';
-        const codeChild = node.querySelector('code');
-        const codeClass = codeChild ? codeChild.getAttribute('class') || '' : '';
+        const className = getElementAttribute(node, 'class');
+        const codeChild = node instanceof Element ? node.querySelector('code') : null;
+        const codeClass = codeChild ? getElementAttribute(codeChild, 'class') : '';
         const langMatch = (className + ' ' + codeClass).match(/language-(\w+)/);
         if (langMatch) lang = langMatch[1];
         return '\n\n```' + lang + '\n' + content.trim() + '\n```\n\n';
@@ -135,9 +139,9 @@ turndownService.addRule('paragraph', {
 // Rule 6: Images
 turndownService.addRule('img', {
     filter: 'img',
-    replacement: (content, node: any) => {
-        const alt = node.getAttribute('alt') || '';
-        const src = node.getAttribute('src') || '';
+    replacement: (content, node: Node) => {
+        const alt = getElementAttribute(node, 'alt');
+        const src = getElementAttribute(node, 'src');
         if (!src) return '';
         return `![${alt}](${src})`;
     }
@@ -427,7 +431,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 
     // Scroll Persistence
     const scrollContainerRef = useRef<HTMLDivElement>(null);
-    const scrollTimeoutRef = useRef<any>(null);
+    const scrollTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
     useEffect(() => {
         if (scrollContainerRef.current) {
@@ -548,19 +552,18 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
 
 
 
-    const markdownComponents = React.useMemo(() => {
-        const Wrapper = ({ children }: any) => <HighlightElements query={localSearchQuery} options={searchOptions}>{children}</HighlightElements>;
+    const markdownComponents = React.useMemo<Components>(() => {
+        const Wrapper: React.FC<{ children?: React.ReactNode }> = ({ children }) => <HighlightElements query={localSearchQuery} options={searchOptions}>{children}</HighlightElements>;
         return {
-            p: ({ children }: any) => <p className="mb-2"><Wrapper>{children}</Wrapper></p>,
-            li: ({ children }: any) => <li><Wrapper>{children}</Wrapper></li>,
-            h1: ({ children }: any) => <h1 className="text-xl font-bold mb-2"><Wrapper>{children}</Wrapper></h1>,
-            h2: ({ children }: any) => <h2 className="text-lg font-bold mb-2"><Wrapper>{children}</Wrapper></h2>,
-            h3: ({ children }: any) => <h3 className="text-base font-bold mb-1"><Wrapper>{children}</Wrapper></h3>,
-            strong: ({ children }: any) => <strong><Wrapper>{children}</Wrapper></strong>,
-            em: ({ children }: any) => <em><Wrapper>{children}</Wrapper></em>,
-            img: ({ src, alt }: any) => <MarkdownImage src={src} alt={alt} />,
-            code: (props: any) => {
-                const { className, children, ...rest } = props;
+            p: ({ children }) => <p className="mb-2"><Wrapper>{children}</Wrapper></p>,
+            li: ({ children }) => <li><Wrapper>{children}</Wrapper></li>,
+            h1: ({ children }) => <h1 className="text-xl font-bold mb-2"><Wrapper>{children}</Wrapper></h1>,
+            h2: ({ children }) => <h2 className="text-lg font-bold mb-2"><Wrapper>{children}</Wrapper></h2>,
+            h3: ({ children }) => <h3 className="text-base font-bold mb-1"><Wrapper>{children}</Wrapper></h3>,
+            strong: ({ children }) => <strong><Wrapper>{children}</Wrapper></strong>,
+            em: ({ children }) => <em><Wrapper>{children}</Wrapper></em>,
+            img: ({ src, alt }) => <MarkdownImage src={String(src || '')} alt={String(alt || '')} />,
+            code: ({ className, children }) => {
                 const match = /language-(\w+)/.exec(className || '');
                 const content = String(children).replace(/\n$/, '');
                 const isBlock = match || String(children).includes('\n');
@@ -584,7 +587,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                 }
 
                 return (
-                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400" {...rest}>
+                    <code className="bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[0.85em] font-mono text-blue-600 dark:text-blue-400">
                         <Wrapper>{children}</Wrapper>
                     </code>
                 );
@@ -859,26 +862,7 @@ export const QuickNotesView: React.FC<QuickNotesViewProps> = ({
                                     <div className="px-4 pb-4 pt-1 prose dark:prose-invert max-w-none prose-sm">
                                         <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}
-                                            components={{
-                                                img: ({ node, ...props }) => <MarkdownImage src={props.src || ''} alt={props.alt || ''} />,
-                                                code({ node, inline, className, children, ...props }: any) {
-                                                    const match = /language-(\w+)/.exec(className || '');
-                                                    return !inline && match ? (
-                                                        <SyntaxHighlighter
-                                                            style={vscDarkPlus}
-                                                            language={match[1]}
-                                                            PreTag="div"
-                                                            {...props}
-                                                        >
-                                                            {String(children).replace(/\n$/, '')}
-                                                        </SyntaxHighlighter>
-                                                    ) : (
-                                                        <code className={className} {...props}>
-                                                            {children}
-                                                        </code>
-                                                    );
-                                                },
-                                            }}
+                                            components={markdownComponents}
                                         >
                                             {note.content}
                                         </ReactMarkdown>
