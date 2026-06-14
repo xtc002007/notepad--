@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense } from 'react';
 import { Project, Note, NoteType, Theme, AppSettings, DEFAULT_SETTINGS, UserHabits, DEFAULT_USER_HABITS } from './types';
 import { storage } from './storage';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+// Lazy import to avoid blocking startup with Tauri window API initialization
+const getCurrentWindowLazy = () => import('@tauri-apps/api/window').then(m => m.getCurrentWindow());
 
 // Lazy load components to improve startup performance
 const Sidebar = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.Sidebar })));
@@ -16,7 +17,11 @@ const generateId = () => Math.random().toString(36).substring(2, 9);
 // Special ID for Quick Notes View
 const QUICK_NOTES_VIEW_ID = 'quick_notes';
 
-const MainApp: React.FC = () => {
+interface MainAppProps {
+  onReady?: () => void;
+}
+
+const MainApp: React.FC<MainAppProps> = ({ onReady }) => {
   // Loading State
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
@@ -91,13 +96,25 @@ const MainApp: React.FC = () => {
     loadData();
   }, []);
 
-  // --- Close Handler (Auto-Backup) ---
+  // Signal that the app is ready (dismiss splash screen)
+  const hasSignaledReady = useRef(false);
   useEffect(() => {
+    if (isDataLoaded && onReady && !hasSignaledReady.current) {
+      hasSignaledReady.current = true;
+      // Use requestAnimationFrame to ensure DOM has painted before dismissing splash
+      requestAnimationFrame(() => onReady());
+    }
+  }, [isDataLoaded, onReady]);
+
+  // --- Close Handler (Auto-Backup) - deferred until after data is loaded ---
+  useEffect(() => {
+    if (!isDataLoaded) return;
+
     let unlisten: any;
     let isClosing = false;
 
     const setupCloseListener = async () => {
-      const win = getCurrentWindow();
+      const win = await getCurrentWindowLazy();
       unlisten = await win.onCloseRequested(async (event) => {
         if (isClosing) return; // Prevent recursion
 
@@ -120,7 +137,7 @@ const MainApp: React.FC = () => {
     return () => {
       if (unlisten && typeof unlisten === 'function') unlisten();
     };
-  }, [settings]);
+  }, [settings, isDataLoaded]);
 
   // --- Settings Persistence & Application ---
   useEffect(() => {

@@ -16,7 +16,25 @@ export default defineConfig(({ mode }) => {
     },
     // Disable source maps to reduce bundle size and load time
     css: { devSourcemap: false },
-    build: { sourcemap: false },
+    build: {
+      sourcemap: false,
+      // Split vendor chunks for better caching and parallel loading
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom'],
+            'markdown': ['react-markdown', 'remark-gfm', 'react-syntax-highlighter'],
+            'tauri': ['@tauri-apps/api', '@tauri-apps/plugin-sql', '@tauri-apps/plugin-fs', '@tauri-apps/plugin-dialog'],
+          },
+        },
+      },
+      // Reduce chunk size warnings threshold
+      chunkSizeWarningLimit: 600,
+      // Minify for smaller bundles
+      minify: 'esbuild',
+      // Target modern browsers for smaller output
+      target: 'es2021',
+    },
     plugins: [react()],
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
