@@ -3,7 +3,6 @@ import { Project, Note, AppSettings, DEFAULT_SETTINGS, NoteType, UserHabits, DEF
 import Database from '@tauri-apps/plugin-sql';
 import { mkdir, writeFile, readFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { appDataDir, join } from '@tauri-apps/api/path';
-import { convertFileSrc } from '@tauri-apps/api/core';
 
 export interface StorageService {
     init(): Promise<void>;
@@ -29,6 +28,14 @@ export interface StorageService {
 
 const DB_FILENAME = 'notepad.db';
 
+interface ProjectRow extends Omit<Project, 'noteOrder'> {
+    noteOrder: string | null;
+}
+
+interface NoteRow extends Omit<Note, 'isPinned'> {
+    isPinned: number | null;
+}
+
 export class SqliteStorageService implements StorageService {
     private db: Database | null = null;
     private assetsDir = 'attachments';
@@ -37,10 +44,34 @@ export class SqliteStorageService implements StorageService {
     private initPromise: Promise<void> | null = null;
 
     private withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
-        return Promise.race([
-            promise,
-            new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms))
-        ]);
+        return new Promise<T>((resolve, reject) => {
+            const timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
+            promise
+                .then(resolve)
+                .catch(reject)
+                .finally(() => clearTimeout(timeoutId));
+        });
+    }
+
+    private async getDb(): Promise<Database> {
+        if (!this.db) await this.init();
+        if (!this.db) throw new Error('Database is not initialized');
+        return this.db;
+    }
+
+    private isDuplicateColumnError(error: unknown): boolean {
+        return String(error).toLowerCase().includes('duplicate column');
+    }
+
+    private async addColumnIfMissing(sql: string): Promise<void> {
+        const db = await this.getDb();
+        try {
+            await db.execute(sql);
+        } catch (error) {
+            if (!this.isDuplicateColumnError(error)) {
+                throw error;
+            }
+        }
     }
 
     async init() {
@@ -49,19 +80,21 @@ export class SqliteStorageService implements StorageService {
 
         this.initPromise = (async () => {
             try {
-                console.log('[Storage] Initializing SQLite connection...');
                 this.db = await this.withTimeout(
                     Database.load(`sqlite:${DB_FILENAME}`),
                     5000,
                     'Database connection timeout after 5s'
                 );
-                console.log('[Storage] Database loaded successfully:', DB_FILENAME);
             } catch (error) {
                 console.error('[Storage] Failed to load database:', error);
+                this.db = null;
+                this.initPromise = null;
                 throw error;
             }
 
-            await this.db.execute(`
+            const db = await this.getDb();
+
+            await db.execute(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -70,7 +103,7 @@ export class SqliteStorageService implements StorageService {
       );
     `);
 
-            await this.db.execute(`
+            await db.execute(`
       CREATE TABLE IF NOT EXISTS notes (
         id TEXT PRIMARY KEY,
         projectId TEXT NOT NULL,
@@ -85,21 +118,20 @@ export class SqliteStorageService implements StorageService {
       );
     `);
 
-            // Migration: Attempt to add columns if they don't exist (for existing DBs)
-            try { await this.db.execute('ALTER TABLE notes ADD COLUMN updatedAt INTEGER'); } catch (e) { /* ignore if exists */ }
-            try { await this.db.execute('ALTER TABLE notes ADD COLUMN isPinned INTEGER'); } catch (e) { /* ignore if exists */ }
-            try { await this.db.execute('ALTER TABLE notes ADD COLUMN aiSummary TEXT'); } catch (e) { /* ignore if exists */ }
-            try { await this.db.execute('ALTER TABLE notes ADD COLUMN aiKeyInfo TEXT'); } catch (e) { /* ignore if exists */ }
-            try { await this.db.execute('ALTER TABLE projects ADD COLUMN noteOrder TEXT'); } catch (e) { /* ignore if exists */ }
+            await this.addColumnIfMissing('ALTER TABLE notes ADD COLUMN updatedAt INTEGER');
+            await this.addColumnIfMissing('ALTER TABLE notes ADD COLUMN isPinned INTEGER');
+            await this.addColumnIfMissing('ALTER TABLE notes ADD COLUMN aiSummary TEXT');
+            await this.addColumnIfMissing('ALTER TABLE notes ADD COLUMN aiKeyInfo TEXT');
+            await this.addColumnIfMissing('ALTER TABLE projects ADD COLUMN noteOrder TEXT');
 
-            await this.db.execute(`
+            await db.execute(`
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         json TEXT NOT NULL
       );
     `);
 
-            await this.db.execute(`
+            await db.execute(`
       CREATE TABLE IF NOT EXISTS user_habits (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         json TEXT NOT NULL
@@ -108,7 +140,9 @@ export class SqliteStorageService implements StorageService {
 
             try {
                 await mkdir(this.assetsDir, { baseDir: BaseDirectory.AppData, recursive: true });
-            } catch (e) { }
+            } catch (error) {
+                console.warn('[Storage] Failed to create assets directory:', error);
+            }
 
             // Load settings into memory
             this.settings = await this.getSettings();
@@ -118,58 +152,61 @@ export class SqliteStorageService implements StorageService {
     }
 
     async getProjects(): Promise<Project[]> {
-        if (!this.db) await this.init();
-        const raw = await this.db!.select<any[]>('SELECT * FROM projects ORDER BY updatedAt DESC');
+        const db = await this.getDb();
+        const raw = await db.select<ProjectRow[]>('SELECT * FROM projects ORDER BY updatedAt DESC');
         return raw.map(p => ({
-            ...p,
+            id: p.id,
+            name: p.name,
+            updatedAt: p.updatedAt,
             noteOrder: p.noteOrder ? JSON.parse(p.noteOrder) : undefined
         }));
     }
 
     async saveProject(p: Project): Promise<void> {
-        if (!this.db) await this.init();
-        await this.db!.execute(
+        const db = await this.getDb();
+        await db.execute(
             'INSERT OR REPLACE INTO projects (id, name, updatedAt, noteOrder) VALUES ($1, $2, $3, $4)',
             [p.id, p.name, p.updatedAt, p.noteOrder ? JSON.stringify(p.noteOrder) : null]
         );
     }
 
     async deleteProject(id: string): Promise<void> {
-        if (!this.db) await this.init();
-        await this.db!.execute('DELETE FROM projects WHERE id = $1', [id]);
-        await this.db!.execute('DELETE FROM notes WHERE projectId = $1', [id]);
+        const db = await this.getDb();
+        await db.execute('DELETE FROM projects WHERE id = $1', [id]);
+        await db.execute('DELETE FROM notes WHERE projectId = $1', [id]);
     }
 
     async getNotes(): Promise<Note[]> {
-        if (!this.db) await this.init();
-        const notes = await this.db!.select<Note[]>('SELECT * FROM notes ORDER BY COALESCE(updatedAt, createdAt) DESC');
+        const db = await this.getDb();
+        const notes = await db.select<NoteRow[]>('SELECT * FROM notes ORDER BY COALESCE(updatedAt, createdAt) DESC');
         return notes.map(n => ({
             ...n,
-            isPinned: !!n.isPinned // Ensure boolean type
+            isPinned: !!n.isPinned
         }));
     }
 
     async saveNote(n: Note): Promise<void> {
-        if (!this.db) await this.init();
-        await this.db!.execute(
+        const db = await this.getDb();
+        await db.execute(
             'INSERT OR REPLACE INTO notes (id, projectId, type, content, title, createdAt, updatedAt, isPinned, aiSummary, aiKeyInfo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-            [n.id, n.projectId, n.type, n.content, n.title, n.createdAt, n.updatedAt || null, n.isPinned ? 1 : 0, n.aiSummary || null, n.aiKeyInfo || null]
+            [n.id, n.projectId, n.type, n.content, n.title, n.createdAt, n.updatedAt ?? null, n.isPinned ? 1 : 0, n.aiSummary || null, n.aiKeyInfo || null]
         );
     }
 
     async deleteNote(id: string): Promise<void> {
-        if (!this.db) await this.init();
-        await this.db!.execute('DELETE FROM notes WHERE id = $1', [id]);
+        const db = await this.getDb();
+        await db.execute('DELETE FROM notes WHERE id = $1', [id]);
     }
 
     async getSettings(): Promise<AppSettings> {
-        if (!this.db) await this.init();
-        const result = await this.db!.select<{ json: string }[]>('SELECT json FROM settings WHERE id = 1');
+        const db = await this.getDb();
+        const result = await db.select<{ json: string }[]>('SELECT json FROM settings WHERE id = 1');
         if (result.length > 0) {
             try {
-                const parsed = JSON.parse(result[0].json);
+                const parsed = JSON.parse(result[0].json) as Partial<AppSettings>;
                 return { ...DEFAULT_SETTINGS, ...parsed };
-            } catch (e) {
+            } catch (error) {
+                console.warn('[Storage] Failed to parse settings, using defaults:', error);
                 return DEFAULT_SETTINGS;
             }
         }
@@ -177,22 +214,23 @@ export class SqliteStorageService implements StorageService {
     }
 
     async saveSettings(settings: AppSettings): Promise<void> {
-        if (!this.db) await this.init();
+        const db = await this.getDb();
         this.settings = settings;
-        await this.db!.execute(
+        await db.execute(
             'INSERT OR REPLACE INTO settings (id, json) VALUES (1, $1)',
             [JSON.stringify(settings)]
         );
     }
 
     async getUserHabits(): Promise<UserHabits> {
-        if (!this.db) await this.init();
-        const result = await this.db!.select<{ json: string }[]>('SELECT json FROM user_habits WHERE id = 1');
+        const db = await this.getDb();
+        const result = await db.select<{ json: string }[]>('SELECT json FROM user_habits WHERE id = 1');
         if (result.length > 0) {
             try {
-                const parsed = JSON.parse(result[0].json);
+                const parsed = JSON.parse(result[0].json) as Partial<UserHabits>;
                 return { ...DEFAULT_USER_HABITS, ...parsed };
-            } catch (e) {
+            } catch (error) {
+                console.warn('[Storage] Failed to parse user habits, using defaults:', error);
                 return DEFAULT_USER_HABITS;
             }
         }
@@ -200,21 +238,23 @@ export class SqliteStorageService implements StorageService {
     }
 
     async saveUserHabits(habits: UserHabits): Promise<void> {
-        if (!this.db) await this.init();
-        await this.db!.execute(
+        const db = await this.getDb();
+        await db.execute(
             'INSERT OR REPLACE INTO user_habits (id, json) VALUES (1, $1)',
             [JSON.stringify(habits)]
         );
     }
 
     async clearAllData(): Promise<void> {
-        if (!this.db) await this.init();
-        await this.db!.execute('DELETE FROM projects');
-        await this.db!.execute('DELETE FROM notes');
+        const db = await this.getDb();
+        await db.execute('DELETE FROM projects');
+        await db.execute('DELETE FROM notes');
     }
 
     async saveAsset(file: File): Promise<string> {
-        const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+        await this.getDb();
+        const safeName = file.name.replace(/[<>:"/\\|?*\x00-\x1F]+/g, '_').replace(/\s+/g, '_');
+        const fileName = `${Date.now()}_${safeName}`;
         const filePath = await join(this.assetsDir, fileName);
         const arrayBuffer = await file.arrayBuffer();
         await writeFile(filePath, new Uint8Array(arrayBuffer), { baseDir: BaseDirectory.AppData });

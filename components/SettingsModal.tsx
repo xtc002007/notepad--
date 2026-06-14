@@ -34,7 +34,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     if (!isOpen) return null;
 
-    const update = (key: keyof AppSettings, value: any) => {
+    const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
         onUpdateSettings({ ...settings, [key]: value });
     };
 
